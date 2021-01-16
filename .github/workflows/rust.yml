@@ -19,7 +19,7 @@ jobs:
       matrix:
         label:
           - Windows x86_64
-          # - Linux x86_64
+          - Linux x86_64
           # - macOS x86_64
 
         include:
@@ -28,10 +28,10 @@ jobs:
             os: windows-latest
             cross: skip
 
-          # - label: Linux x86_64
-          #   target: x86_64-unknown-linux-gnu
-          #   os: ubuntu-latest
-          #   cross: skip
+          - label: Linux x86_64
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: skip
 
           # - label: macOS x86_64
           #   target: x86_64-apple-darwin
@@ -65,6 +65,7 @@ jobs:
           SKIP_CROSS: ${{ matrix.cross }}
           IS_DEPLOY: ${{ startsWith(github.ref, 'refs/tags/') && (matrix.release_anyway != '' || !(startsWith(matrix.toolchain, 'nightly') || startsWith(matrix.toolchain, 'beta'))) }}
           FEATURES: ${{ matrix.features }}
+          OS_NAME: ${{ matrix.os }}
 
       - name: Prepare Release
         if: startsWith(github.ref, 'refs/tags/') && matrix.release == ''

@@ -10,6 +10,12 @@ main() {
         release_flag="--release"
     fi
 
+    if [ "$OS_NAME" = "ubuntu-latest" ]; then
+        sudo add-apt-repository ppa:obsproject/obs-studio -y
+        sudo apt update
+        sudo apt install obs-studio -y
+    fi
+
     $cargo build --target $TARGET $release_flag $FEATURES
 }
 
