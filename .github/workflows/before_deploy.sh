@@ -11,8 +11,12 @@ main() {
         stage=$(mktemp -d)
     fi
 
+    if [ "$OS_NAME" = "ubuntu-latest" ]; then
+        mkdir -p $stage/obs-livesplit-one/bin/64bit
+        cp target/$TARGET/release/libobs_livesplit_one.so $stage/obs-livesplit-one/bin/64bit/libobs-livesplit-one.so 2>/dev/null || :
+    fi
+
     cp target/$TARGET/release/obs_livesplit_one.dll $stage/obs-livesplit-one.dll 2>/dev/null || :
-    cp target/$TARGET/release/libobs_livesplit_one.so $stage/libobs_livesplit_one.so 2>/dev/null || :
     cp target/$TARGET/release/libobs_livesplit_one.dylib $stage/libobs_livesplit_one.dylib 2>/dev/null || :
 
     cd $stage
