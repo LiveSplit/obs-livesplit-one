@@ -13,11 +13,12 @@ main() {
 
     if [ "$OS_NAME" = "ubuntu-latest" ]; then
         mkdir -p $stage/obs-livesplit-one/bin/64bit
-        cp target/$TARGET/release/libobs_livesplit_one.so $stage/obs-livesplit-one/bin/64bit/libobs-livesplit-one.so 2>/dev/null || :
+        cp target/$TARGET/release/libobs_livesplit_one.so $stage/obs-livesplit-one/bin/64bit/libobs-livesplit-one.so
+    elif [ "$OS_NAME" = "macOS-latest" ]; then
+        cp target/$TARGET/release/libobs_livesplit_one.dylib $stage/obs-livesplit-one.so
+    elif [ "$OS_NAME" = "windows-latest" ]; then
+        cp target/$TARGET/release/obs_livesplit_one.dll $stage/obs-livesplit-one.dll
     fi
-
-    cp target/$TARGET/release/obs_livesplit_one.dll $stage/obs-livesplit-one.dll 2>/dev/null || :
-    cp target/$TARGET/release/libobs_livesplit_one.dylib $stage/libobs_livesplit_one.dylib 2>/dev/null || :
 
     cd $stage
     if [ "$OS_NAME" = "windows-latest" ]; then

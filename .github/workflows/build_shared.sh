@@ -16,6 +16,14 @@ main() {
         sudo apt install obs-studio -y
     fi
 
+    if [ "$OS_NAME" = "macOS-latest" ]; then
+        curl https://cdn-fastly.obsproject.com/downloads/obs-mac-26.1.2.dmg -o obs.dmg
+        hdiutil attach obs.dmg
+        mkdir libobs
+        cp "/Volumes/OBS-Studio 26.1.2/OBS.app/Contents/Frameworks/libobs.0.dylib" "./libobs/libobs.dylib"
+        export RUSTFLAGS="-L libobs"
+    fi
+
     $cargo build --target $TARGET $release_flag $FEATURES
 }
 

@@ -18,6 +18,12 @@ Download the latest release for your operating system from the
 - Untar, e.g.: `tar -zxvf obs-livesplit-one-v0.0.1-x86_64-unknown-linux-gnu.tar.gz -C
    $HOME/.config/obs-studio/plugins/`
 
+### macOS
+
+- Right click your `OBS` -> Options -> Show in Finder
+- Right click the `OBS.app` -> Show Package Contents
+- Drag `obs-livesplit-one.so` into `Contents/PlugIns`
+
 ## Developer Notes
 
 If you add a new function to `ffi.rs`, also add it to `exports.def` and run

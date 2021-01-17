@@ -20,7 +20,7 @@ jobs:
         label:
           - Windows x86_64
           - Linux x86_64
-          # - macOS x86_64
+          - macOS x86_64
 
         include:
           - label: Windows x86_64
@@ -33,10 +33,10 @@ jobs:
             os: ubuntu-latest
             cross: skip
 
-          # - label: macOS x86_64
-          #   target: x86_64-apple-darwin
-          #   os: macOS-latest
-          #   cross: skip
+          - label: macOS x86_64
+            target: x86_64-apple-darwin
+            os: macOS-latest
+            cross: skip
 
     steps:
       - name: Checkout Commit
