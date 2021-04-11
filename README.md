@@ -35,11 +35,3 @@ properties, you can choose a split file and a layout.
 
 In Obs studio's _Settings_ menu, under the _Hotkeys_ tab, scroll to the source's name,
 where you can set hotkeys for the various actions.
-
-## Developer Notes
-
-If you add a new function to `ffi.rs`, also add it to `exports.def` and run
-(needs to be done in the Visual Studio console):
-```sh
-lib /def:exports.def /OUT:obs.lib /MACHINE:x64
-```
