@@ -23,3 +23,15 @@ Download the latest release for your operating system from the
 - Right click your `OBS` -> Options -> Show in Finder
 - Right click the `OBS.app` -> Show Package Contents
 - Drag `obs-livesplit-one.so` into `Contents/PlugIns`
+
+## Usage
+
+### Add a LiveSplit One source
+
+Click the “add source” button, as usual, and choose _LiveSplit One_. In the source's
+properties, you can choose a split file and a layout.
+
+### Configure hotkeys
+
+In Obs studio's _Settings_ menu, under the _Hotkeys_ tab, scroll to the source's name,
+where you can set hotkeys for the various actions.
