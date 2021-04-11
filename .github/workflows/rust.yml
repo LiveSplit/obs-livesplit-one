@@ -20,6 +20,7 @@ jobs:
         label:
           - Windows x86_64
           - Linux x86_64
+          - macOS aarch64
           - macOS x86_64
 
         include:
@@ -32,6 +33,12 @@ jobs:
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: skip
+
+          - label: macOS aarch64
+            target: aarch64-apple-darwin
+            os: macOS-latest
+            cross: skip
+            install_target: true
 
           - label: macOS x86_64
             target: x86_64-apple-darwin
@@ -50,6 +57,12 @@ jobs:
       - name: Install Target
         if: matrix.install_target != ''
         run: rustup target add ${{ matrix.target }}
+
+      - name: Select XCode to use
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_12.3.app"
+          sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
 
       - name: Install cross
         if: matrix.cross == ''
