@@ -6,22 +6,20 @@ main() {
         cargo=cargo
     fi
     local release_flag=""
+    local target_folder="debug"
     if [ "$IS_DEPLOY" = "true" ]; then
         release_flag="--release"
+        target_folder="release"
     fi
+
+    $cargo build -p obs --target $TARGET $release_flag
 
     if [ "$OS_NAME" = "ubuntu-latest" ]; then
-        sudo add-apt-repository ppa:obsproject/obs-studio -y
-        sudo apt update
-        sudo apt install obs-studio -y
-    fi
-
-    if [ "$OS_NAME" = "macOS-latest" ]; then
-        curl https://cdn-fastly.obsproject.com/downloads/obs-mac-26.1.2.dmg -o obs.dmg
-        hdiutil attach obs.dmg
-        mkdir libobs
-        cp "/Volumes/OBS-Studio 26.1.2/OBS.app/Contents/Frameworks/libobs.0.dylib" "./libobs/libobs.dylib"
-        export RUSTFLAGS="-L libobs"
+        cp target/$TARGET/$target_folder/libobs.so .
+    elif [ "$OS_NAME" = "macOS-latest" ]; then
+        cp target/$TARGET/$target_folder/libobs.dylib .
+    elif [ "$OS_NAME" = "windows-latest" ]; then
+        cp target/$TARGET/$target_folder/obs.dll.lib ./obs.lib
     fi
 
     $cargo build --target $TARGET $release_flag $FEATURES

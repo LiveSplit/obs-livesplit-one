@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     ffi::{c_void, CStr},
-    fmt,
     fs::File,
     io::{BufReader, BufWriter, Seek, SeekFrom},
     mem,
@@ -11,17 +10,17 @@ use std::{
 };
 
 mod ffi;
+mod ffi_types;
 
 use ffi::{
-    blog, gs_draw_sprite, gs_effect_get_param_by_name, gs_effect_get_technique,
-    gs_effect_set_texture, gs_effect_t, gs_technique_begin, gs_technique_begin_pass,
-    gs_technique_end, gs_technique_end_pass, gs_texture_create, gs_texture_destroy,
-    gs_texture_set_image, gs_texture_t, obs_data_get_int, obs_data_get_string,
-    obs_data_set_default_int, obs_data_t, obs_enter_graphics, obs_get_base_effect, obs_hotkey_id,
-    obs_hotkey_register_source, obs_hotkey_t, obs_leave_graphics, obs_module_t, obs_mouse_event,
-    obs_properties_add_button, obs_properties_add_int, obs_properties_add_path,
-    obs_properties_create, obs_properties_t, obs_property_t, obs_register_source_s,
-    obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
+    gs_draw_sprite, gs_effect_get_param_by_name, gs_effect_get_technique, gs_effect_set_texture,
+    gs_effect_t, gs_technique_begin, gs_technique_begin_pass, gs_technique_end,
+    gs_technique_end_pass, gs_texture_create, gs_texture_destroy, gs_texture_set_image,
+    gs_texture_t, obs_data_get_int, obs_data_get_string, obs_data_set_default_int, obs_data_t,
+    obs_enter_graphics, obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source,
+    obs_hotkey_t, obs_leave_graphics, obs_module_t, obs_mouse_event, obs_properties_add_button,
+    obs_properties_add_int, obs_properties_add_path, obs_properties_create, obs_properties_t,
+    obs_property_t, obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA,
     OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
     OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION, OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
@@ -88,13 +87,12 @@ fn parse_run(path: &CStr) -> Option<Run> {
     Some(run.run)
 }
 
-#[allow(unused)]
-fn log(x: fmt::Arguments<'_>) {
-    let str = format!("{}\0", x);
-    unsafe {
-        blog(LOG_WARNING as _, str.as_ptr().cast());
-    }
-}
+// fn log(x: fmt::Arguments<'_>) {
+//     let str = format!("{}\0", x);
+//     unsafe {
+//         blog(LOG_WARNING as _, str.as_ptr().cast());
+//     }
+// }
 
 fn parse_layout(path: &CStr) -> Option<Layout> {
     let path = path.to_str().ok()?;
@@ -133,21 +131,17 @@ impl State {
     unsafe fn new(
         Settings {
             run,
-            mut layout,
+            layout,
             width,
             height,
         }: Settings,
     ) -> Self {
         let timer = Timer::new(run).unwrap();
+        let state = LayoutState::default();
+        let renderer = SoftwareRenderer::new();
 
-        let state = layout.state(&timer.snapshot());
-
-        let mut renderer = SoftwareRenderer::new();
-        renderer.render(&state, [width, height]);
-
-        let mut arr = [renderer.image().as_ptr(), ptr::null()];
         obs_enter_graphics();
-        let texture = gs_texture_create(width, height, GS_RGBA, 1, arr.as_mut_ptr(), GS_DYNAMIC);
+        let texture = gs_texture_create(width, height, GS_RGBA, 1, ptr::null_mut(), GS_DYNAMIC);
         obs_leave_graphics();
 
         Self {
@@ -164,10 +158,11 @@ impl State {
     unsafe fn update(&mut self) {
         self.layout
             .update_state(&mut self.state, &self.timer.snapshot());
+
         self.renderer.render(&self.state, [self.width, self.height]);
         gs_texture_set_image(
             self.texture,
-            self.renderer.image().as_ptr(),
+            self.renderer.image_data().as_ptr(),
             self.width * 4,
             false,
         );
@@ -483,18 +478,14 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
     if state.width != settings.width || state.height != settings.height {
         state.width = settings.width;
         state.height = settings.height;
-        state
-            .renderer
-            .render(&state.state, [state.width, state.height]);
 
-        let mut arr = [state.renderer.image().as_ptr(), ptr::null()];
         obs_enter_graphics();
         let mut texture = gs_texture_create(
             state.width,
             state.height,
             GS_RGBA,
             1,
-            arr.as_mut_ptr(),
+            ptr::null_mut(),
             GS_DYNAMIC,
         );
         mem::swap(&mut state.texture, &mut texture);
