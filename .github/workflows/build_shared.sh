@@ -12,15 +12,16 @@ main() {
         target_folder="release"
     fi
 
-    $cargo build -p obs --target $TARGET $release_flag $FEATURES
-
-    if [ "$OS_NAME" = "macOS-latest" ]; then
-        cp target/$TARGET/$target_folder/libobs.dylib .
-    elif [ "$OS_NAME" = "windows-latest" ]; then
+    if [ "$OS_NAME" = "windows-latest" ]; then
+        $cargo build -p obs --target $TARGET $release_flag $FEATURES
         cp target/$TARGET/$target_folder/obs.dll.lib ./obs.lib
     fi
 
     $cargo build --target $TARGET $release_flag $FEATURES
+
+    if [ "$OS_NAME" = "macOS-latest" ]; then
+        install_name_tool -change $(pwd)/target/$TARGET/$target_folder/deps/libobs.dylib @rpath/libobs.0.dylib target/$TARGET/$target_folder/libobs_livesplit_one.dylib
+    fi
 }
 
 main
