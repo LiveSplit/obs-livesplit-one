@@ -26,7 +26,7 @@ use ffi::{
 };
 use livesplit_core::{
     layout::{self, LayoutSettings, LayoutState},
-    rendering::software::SoftwareRenderer,
+    rendering::software::Renderer,
     run::{parser::composite, saver::livesplit::save_timer},
     Layout, Run, Segment, Timer,
 };
@@ -61,7 +61,7 @@ struct State {
     timer: Timer,
     layout: Layout,
     state: LayoutState,
-    renderer: SoftwareRenderer,
+    renderer: Renderer,
     texture: *mut gs_texture_t,
     width: u32,
     height: u32,
@@ -138,7 +138,7 @@ impl State {
     ) -> Self {
         let timer = Timer::new(run).unwrap();
         let state = LayoutState::default();
-        let renderer = SoftwareRenderer::new();
+        let renderer = Renderer::new();
 
         obs_enter_graphics();
         let texture = gs_texture_create(width, height, GS_RGBA, 1, ptr::null_mut(), GS_DYNAMIC);
