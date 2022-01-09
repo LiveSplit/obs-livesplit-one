@@ -51,7 +51,7 @@ extern "C" {
         default_path: *const c_char,
     ) -> *mut obs_property_t;
     pub fn obs_data_get_string(data: *mut obs_data_t, name: *const c_char) -> *const c_char;
-    // pub fn blog(log_level: c_int, format: *const c_char, ...);
+    pub fn blog(log_level: c_int, format: *const c_char, ...);
     pub fn obs_properties_add_int(
         props: *mut obs_properties_t,
         name: *const c_char,

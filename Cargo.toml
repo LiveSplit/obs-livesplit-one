@@ -16,10 +16,12 @@ crate-type = ["cdylib"]
 obs = { path = "obs" }
 livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features = ["software-rendering"] }
 once_cell = "1.5.2"
+log = { version = "0.4.6", features = ["serde"] }
 
 [features]
-default = ["font-loading"]
+default = ["font-loading", "auto-splitting"]
 font-loading = ["livesplit-core/font-loading"]
+auto-splitting = ["livesplit-core/auto-splitting"]
 
 [profile.release]
 lto = true

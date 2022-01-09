@@ -81,10 +81,11 @@ pub extern "C" fn obs_data_get_string(
     panic!()
 }
 
-// #[no_mangle]
-// pub unsafe extern "C" fn blog(_log_level: c_int, _format: *const c_char, ...) {
-//     panic!()
-// }
+// TODO: This technically should take a varargs ... argument, but that's not stable.
+#[no_mangle]
+pub extern "C" fn blog(_log_level: c_int, _format: *const c_char) {
+    panic!()
+}
 
 #[no_mangle]
 pub extern "C" fn obs_properties_add_int(
