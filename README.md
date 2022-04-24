@@ -15,8 +15,7 @@ Download the latest release for your operating system from the
 ### Linux
 
 - `mkdir -p $HOME/.config/obs-studio/plugins`
-- Untar, e.g.: `tar -zxvf obs-livesplit-one-v0.0.1-x86_64-unknown-linux-gnu.tar.gz -C
-   $HOME/.config/obs-studio/plugins/`
+- Untar, e.g.: `tar -zxvf obs-livesplit-one-*-x86_64-unknown-linux-gnu.tar.gz -C $HOME/.config/obs-studio/plugins/`
 
 ### macOS
 
