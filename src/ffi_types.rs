@@ -290,7 +290,10 @@ pub type obs_media_state = u32;
 pub const GS_DYNAMIC: u32 = 2;
 
 pub type _bindgen_ty_1 = u32;
+pub const LOG_ERROR: _bindgen_ty_1 = 100;
 pub const LOG_WARNING: _bindgen_ty_1 = 200;
+pub const LOG_INFO: _bindgen_ty_1 = 300;
+pub const LOG_DEBUG: _bindgen_ty_1 = 400;
 
 pub const OBS_SOURCE_CUSTOM_DRAW: u32 = 8;
 pub const OBS_SOURCE_INTERACTION: u32 = 32;
