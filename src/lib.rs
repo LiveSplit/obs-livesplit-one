@@ -6,7 +6,7 @@ use std::{
     io::{BufWriter, Cursor},
     mem,
     os::raw::{c_char, c_int},
-    path::PathBuf,
+    path::{Path, PathBuf},
     ptr,
 };
 
@@ -33,7 +33,7 @@ use livesplit_core::{
     layout::{self, LayoutSettings, LayoutState},
     rendering::software::Renderer,
     run::{
-        parser::composite,
+        parser::{composite, TimerKind},
         saver::livesplit::{save_timer, IoWrite},
     },
     Layout, Run, Segment, SharedTimer, Timer,
@@ -68,6 +68,7 @@ unsafe impl<T> Send for UnsafeMultiThread<T> {}
 
 struct State {
     timer: SharedTimer,
+    splits_path: Option<PathBuf>,
     #[cfg(feature = "auto-splitting")]
     auto_splitter: auto_splitting::Runtime,
     layout: Layout,
@@ -80,6 +81,7 @@ struct State {
 
 struct Settings {
     run: Run,
+    splits_path: Option<PathBuf>,
     layout: Layout,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_path: String,
@@ -87,21 +89,24 @@ struct Settings {
     height: u32,
 }
 
-fn parse_run(path: &CStr) -> Option<Run> {
+fn parse_run(path: &CStr) -> Option<(Run, Option<PathBuf>)> {
     let path = path.to_str().ok()?;
     if path.is_empty() {
         return None;
     }
     let file_data = fs::read(path).ok()?;
-    let run = composite::parse(&file_data, Some(PathBuf::from(path)), true).ok()?;
+    let run = composite::parse(&file_data, Some(Path::new(path))).ok()?;
     if run.run.is_empty() {
         return None;
     }
-    Some(run.run)
+    Some((
+        run.run,
+        (run.kind == TimerKind::LiveSplit).then(|| PathBuf::from(path)),
+    ))
 }
 
-fn log(level: Level, target: &str, x: &fmt::Arguments<'_>) {
-    let str = format!("[LiveSplit One][{}] {}\0", target, x);
+fn log(level: Level, target: &str, args: &fmt::Arguments<'_>) {
+    let str = format!("[LiveSplit One][{target}] {args}\0");
     let level = match level {
         Level::Error => LOG_ERROR,
         Level::Warn => LOG_WARNING,
@@ -129,7 +134,7 @@ fn parse_layout(path: &CStr) -> Option<Layout> {
 
 unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     let splits_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_SPLITS_PATH).cast());
-    let run = parse_run(splits_path).unwrap_or_else(default_run);
+    let (run, splits_path) = parse_run(splits_path).unwrap_or_else(default_run);
 
     let layout_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LAYOUT_PATH).cast());
     let layout = parse_layout(layout_path).unwrap_or_else(Layout::default_layout);
@@ -148,6 +153,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
 
     Settings {
         run,
+        splits_path,
         layout,
         #[cfg(feature = "auto-splitting")]
         auto_splitter_path,
@@ -160,6 +166,7 @@ impl State {
     unsafe fn new(
         Settings {
             run,
+            splits_path,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter_path,
@@ -188,6 +195,7 @@ impl State {
 
         Self {
             timer,
+            splits_path,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
@@ -201,7 +209,7 @@ impl State {
 
     unsafe fn update(&mut self) {
         self.layout
-            .update_state(&mut self.state, &self.timer.read().snapshot());
+            .update_state(&mut self.state, &self.timer.read().unwrap().snapshot());
 
         self.renderer.render(&self.state, [self.width, self.height]);
         gs_texture_set_image(
@@ -225,7 +233,7 @@ unsafe extern "C" fn split(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().split_or_start();
+        state.timer.write().unwrap().split_or_start();
     }
 }
 
@@ -237,7 +245,7 @@ unsafe extern "C" fn reset(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().reset(true);
+        state.timer.write().unwrap().reset(true);
     }
 }
 
@@ -249,7 +257,7 @@ unsafe extern "C" fn undo(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().undo_split();
+        state.timer.write().unwrap().undo_split();
     }
 }
 
@@ -261,7 +269,7 @@ unsafe extern "C" fn skip(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().skip_split();
+        state.timer.write().unwrap().skip_split();
     }
 }
 
@@ -273,7 +281,7 @@ unsafe extern "C" fn pause(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().toggle_pause_or_start();
+        state.timer.write().unwrap().toggle_pause_or_start();
     }
 }
 
@@ -285,7 +293,7 @@ unsafe extern "C" fn undo_all_pauses(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().undo_all_pauses();
+        state.timer.write().unwrap().undo_all_pauses();
     }
 }
 
@@ -297,7 +305,7 @@ unsafe extern "C" fn previous_comparison(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().switch_to_previous_comparison();
+        state.timer.write().unwrap().switch_to_previous_comparison();
     }
 }
 
@@ -309,7 +317,7 @@ unsafe extern "C" fn next_comparison(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().switch_to_next_comparison();
+        state.timer.write().unwrap().switch_to_next_comparison();
     }
 }
 
@@ -321,7 +329,7 @@ unsafe extern "C" fn toggle_timing_method(
 ) {
     if pressed {
         let state: &mut State = &mut *data.cast();
-        state.timer.write().toggle_timing_method();
+        state.timer.write().unwrap().toggle_timing_method();
     }
 }
 
@@ -460,8 +468,8 @@ unsafe extern "C" fn save_splits(
     data: *mut c_void,
 ) -> bool {
     let state: &mut State = &mut *data.cast();
-    let timer = state.timer.read();
-    if let Some(path) = timer.run().path() {
+    if let Some(path) = &state.splits_path {
+        let timer = state.timer.read().unwrap();
         if let Ok(file) = File::create(path) {
             let _ = save_timer(&timer, IoWrite(BufWriter::new(file)));
         }
@@ -520,10 +528,10 @@ unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
     obs_data_set_default_int(settings, SETTINGS_HEIGHT, 500);
 }
 
-fn default_run() -> Run {
+fn default_run() -> (Run, Option<PathBuf>) {
     let mut run = Run::new();
     run.push_segment(Segment::new("Time"));
-    run
+    (run, None)
 }
 
 unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
@@ -531,7 +539,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     let state: &mut State = &mut *data.cast();
     let settings = parse_settings(settings);
-    state.timer.write().set_run(settings.run).unwrap();
+    state.timer.write().unwrap().set_run(settings.run).unwrap();
     state.layout = settings.layout;
 
     #[cfg(feature = "auto-splitting")]
