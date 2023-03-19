@@ -21,13 +21,16 @@ jobs:
           - Windows aarch64
           - Windows i686
           - Windows x86_64
+          - Windows x86_64-v3
           - Linux arm Hardware Float
           - Linux armv7 Hardware Float
           - Linux aarch64
           - Linux i686
           - Linux x86_64
+          - Linux x86_64-v3
           - macOS aarch64
           - macOS x86_64
+          - macOS x86_64-v3
 
         include:
           - label: Windows aarch64
@@ -47,6 +50,14 @@ jobs:
 
           - label: Windows x86_64
             target: x86_64-pc-windows-msvc
+            os: windows-latest
+            features: font-loading,auto-splitting
+            cross: skip
+
+          - label: Windows x86_64-v3
+            target: x86_64-pc-windows-msvc
+            target_rename: x86_64_v3-pc-windows-msvc
+            rust_flags: -C target-cpu=x86-64-v3
             os: windows-latest
             features: font-loading,auto-splitting
             cross: skip
@@ -80,6 +91,14 @@ jobs:
             features: font-loading,auto-splitting
             cross: skip
 
+          - label: Linux x86_64-v3
+            target: x86_64-unknown-linux-gnu
+            target_rename: x86_64_v3-unknown-linux-gnu
+            rust_flags: -C target-cpu=x86-64-v3
+            os: ubuntu-latest
+            features: font-loading,auto-splitting
+            cross: skip
+
           - label: macOS aarch64
             target: aarch64-apple-darwin
             os: macOS-latest
@@ -93,9 +112,17 @@ jobs:
             features: font-loading,auto-splitting
             cross: skip
 
+          - label: macOS x86_64-v3
+            target: x86_64-apple-darwin
+            target_rename: x86_64_v3-apple-darwin
+            rust_flags: -C target-cpu=x86-64-v3
+            os: macOS-latest
+            features: font-loading,auto-splitting
+            cross: skip
+
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Rust
         uses: hecrj/setup-rust-action@v1
@@ -106,9 +133,20 @@ jobs:
         if: matrix.install_target != ''
         run: rustup target add ${{ matrix.target }}
 
+      - name: Download cross
+        if: matrix.cross == ''
+        uses: robinraju/release-downloader@v1.7
+        with:
+          repository: "cross-rs/cross"
+          latest: true
+          fileName: "cross-x86_64-unknown-linux-gnu.tar.gz"
+          out-file-path: "/home/runner/.cargo/bin"
+
       - name: Install cross
         if: matrix.cross == ''
-        run: cargo install cross
+        run: |
+          cd ~/.cargo/bin
+          tar -xzf cross-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Cache
         uses: Swatinem/rust-cache@ce325b60658c1b38465c06cc965b79baf32c1e72
@@ -124,6 +162,7 @@ jobs:
           IS_DEPLOY: ${{ startsWith(github.ref, 'refs/tags/') && (matrix.release_anyway != '' || !(startsWith(matrix.toolchain, 'nightly') || startsWith(matrix.toolchain, 'beta'))) }}
           FEATURES: ${{ matrix.features }}
           OS_NAME: ${{ matrix.os }}
+          RUSTFLAGS: ${{ matrix.rust_flags }}
 
       - name: Prepare Release
         if: startsWith(github.ref, 'refs/tags/') && matrix.release == ''
@@ -132,6 +171,7 @@ jobs:
         env:
           OS_NAME: ${{ matrix.os }}
           TARGET: ${{ matrix.target }}
+          RELEASE_TARGET: ${{ matrix.target_rename || matrix.target }}
           PLUGIN_BITS: ${{ matrix.bits || '64bit' }}
 
       - name: Release
@@ -146,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Rust
         uses: hecrj/setup-rust-action@v1
@@ -160,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Rust
         uses: hecrj/setup-rust-action@v1

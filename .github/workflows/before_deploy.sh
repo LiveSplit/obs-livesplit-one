@@ -22,9 +22,9 @@ main() {
 
     cd $stage
     if [ "$OS_NAME" = "windows-latest" ]; then
-        7z a $src/obs-livesplit-one-$tag-$TARGET.zip *
+        7z a $src/obs-livesplit-one-$tag-$RELEASE_TARGET.zip *
     else
-        tar czf $src/obs-livesplit-one-$tag-$TARGET.tar.gz *
+        tar czf $src/obs-livesplit-one-$tag-$RELEASE_TARGET.tar.gz *
     fi
     cd $src
 
