@@ -287,6 +287,15 @@ pub struct audio_output_data {
 
 pub type obs_media_state = u32;
 
+pub const OBS_MEDIA_STATE_NONE: obs_media_state = 0;
+pub const OBS_MEDIA_STATE_PLAYING: obs_media_state = 1;
+pub const OBS_MEDIA_STATE_OPENING: obs_media_state = 2;
+pub const OBS_MEDIA_STATE_BUFFERING: obs_media_state = 3;
+pub const OBS_MEDIA_STATE_PAUSED: obs_media_state = 4;
+pub const OBS_MEDIA_STATE_STOPPED: obs_media_state = 5;
+pub const OBS_MEDIA_STATE_ENDED: obs_media_state = 6;
+pub const OBS_MEDIA_STATE_ERROR: obs_media_state = 7;
+
 pub const GS_DYNAMIC: u32 = 2;
 
 pub type _bindgen_ty_1 = u32;
@@ -298,3 +307,4 @@ pub const LOG_DEBUG: _bindgen_ty_1 = 400;
 pub const OBS_SOURCE_CUSTOM_DRAW: u32 = 8;
 pub const OBS_SOURCE_INTERACTION: u32 = 32;
 pub const OBS_SOURCE_VIDEO: u32 = 1;
+pub const OBS_SOURCE_CONTROLLABLE_MEDIA: u32 = 1 << 13;

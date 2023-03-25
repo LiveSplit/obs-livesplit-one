@@ -24,9 +24,13 @@ use ffi::{
     obs_properties_create, obs_properties_t, obs_property_t, obs_register_source_s,
     obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
     OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
-    OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION, OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
+    OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
+    OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
-use ffi_types::{LOG_DEBUG, LOG_ERROR, LOG_INFO};
+use ffi_types::{
+    obs_media_state, LOG_DEBUG, LOG_ERROR, LOG_INFO, OBS_MEDIA_STATE_ENDED, OBS_MEDIA_STATE_PAUSED,
+    OBS_MEDIA_STATE_PLAYING, OBS_MEDIA_STATE_STOPPED,
+};
 #[cfg(feature = "auto-splitting")]
 use livesplit_core::auto_splitting;
 use livesplit_core::{
@@ -36,10 +40,9 @@ use livesplit_core::{
         parser::{composite, TimerKind},
         saver::livesplit::{save_timer, IoWrite},
     },
-    Layout, Run, Segment, SharedTimer, Timer,
+    Layout, Run, Segment, SharedTimer, Timer, TimerPhase,
 };
 use log::{Level, LevelFilter, Log, Metadata, Record};
-use once_cell::sync::Lazy;
 
 macro_rules! cstr {
     ($f:literal) => {
@@ -477,6 +480,84 @@ unsafe extern "C" fn save_splits(
     false
 }
 
+unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
+    let state: &mut State = &mut *data.cast();
+    let phase = state.timer.read().unwrap().current_phase();
+    match phase {
+        TimerPhase::NotRunning => OBS_MEDIA_STATE_STOPPED,
+        TimerPhase::Running => OBS_MEDIA_STATE_PLAYING,
+        TimerPhase::Ended => OBS_MEDIA_STATE_ENDED,
+        TimerPhase::Paused => OBS_MEDIA_STATE_PAUSED,
+    }
+}
+
+unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
+    let state: &mut State = &mut *data.cast();
+    let mut timer = state.timer.write().unwrap();
+    match timer.current_phase() {
+        TimerPhase::NotRunning => {
+            if !pause {
+                timer.start()
+            }
+        }
+        TimerPhase::Running => {
+            if pause {
+                timer.pause()
+            }
+        }
+        TimerPhase::Ended => {}
+        TimerPhase::Paused => {
+            if !pause {
+                timer.resume()
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn media_restart(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    let mut timer = state.timer.write().unwrap();
+    timer.reset(true);
+    timer.start();
+}
+
+unsafe extern "C" fn media_stop(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    state.timer.write().unwrap().reset(true);
+}
+
+unsafe extern "C" fn media_next(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    state.timer.write().unwrap().split();
+}
+
+unsafe extern "C" fn media_previous(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    state.timer.write().unwrap().undo_split();
+}
+
+unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
+    let state: &mut State = &mut *data.cast();
+    let timer = state.timer.read().unwrap();
+    let time = timer.snapshot().current_time()[timer.current_timing_method()].unwrap_or_default();
+    let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
+    secs * 1000 + (nanos / 1_000_000) as i64
+}
+
+unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
+    let state: &mut State = &mut *data.cast();
+    let timer = state.timer.read().unwrap();
+    let time = timer
+        .run()
+        .segments()
+        .last()
+        .unwrap()
+        .personal_best_split_time()[timer.current_timing_method()]
+    .unwrap_or_default();
+    let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
+    secs * 1000 + (nanos / 1_000_000) as i64
+}
+
 const SETTINGS_WIDTH: *const c_char = cstr!("width");
 const SETTINGS_HEIGHT: *const c_char = cstr!("height");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
@@ -587,26 +668,59 @@ impl Log for ObsLog {
 
 #[no_mangle]
 pub extern "C" fn obs_module_load() -> bool {
-    static SOURCE_INFO: Lazy<UnsafeMultiThread<obs_source_info>> = Lazy::new(|| {
-        UnsafeMultiThread(unsafe {
-            obs_source_info {
-                id: cstr!("livesplit-one"),
-                type_: OBS_SOURCE_TYPE_INPUT,
-                output_flags: OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_INTERACTION,
-                get_name: Some(get_name),
-                create: Some(create),
-                destroy: Some(destroy),
-                get_width: Some(get_width),
-                get_height: Some(get_height),
-                video_render: Some(video_render),
-                mouse_wheel: Some(mouse_wheel),
-                get_properties: Some(get_properties),
-                get_defaults: Some(get_defaults),
-                update: Some(update),
-                icon_type: OBS_ICON_TYPE_GAME_CAPTURE,
-                ..mem::zeroed()
-            }
-        })
+    static SOURCE_INFO: UnsafeMultiThread<obs_source_info> = UnsafeMultiThread(obs_source_info {
+        id: cstr!("livesplit-one"),
+        type_: OBS_SOURCE_TYPE_INPUT,
+        output_flags: OBS_SOURCE_VIDEO
+            | OBS_SOURCE_CUSTOM_DRAW
+            | OBS_SOURCE_INTERACTION
+            | OBS_SOURCE_CONTROLLABLE_MEDIA,
+        get_name: Some(get_name),
+        create: Some(create),
+        destroy: Some(destroy),
+        get_width: Some(get_width),
+        get_height: Some(get_height),
+        video_render: Some(video_render),
+        mouse_wheel: Some(mouse_wheel),
+        get_properties: Some(get_properties),
+        get_defaults: Some(get_defaults),
+        update: Some(update),
+        icon_type: OBS_ICON_TYPE_GAME_CAPTURE,
+        activate: None,
+        deactivate: None,
+        show: None,
+        hide: None,
+        video_tick: None,
+        filter_video: None,
+        filter_audio: None,
+        enum_active_sources: None,
+        save: None,
+        load: None,
+        mouse_click: None,
+        mouse_move: None,
+        focus: None,
+        key_click: None,
+        filter_remove: None,
+        type_data: ptr::null_mut(),
+        free_type_data: None,
+        audio_render: None,
+        enum_all_sources: None,
+        transition_start: None,
+        transition_stop: None,
+        get_defaults2: None,
+        get_properties2: None,
+        audio_mix: None,
+        media_play_pause: Some(media_play_pause),
+        media_restart: Some(media_restart),
+        media_stop: Some(media_stop),
+        media_next: Some(media_next),
+        media_previous: Some(media_previous),
+        media_get_duration: Some(media_get_duration),
+        media_get_time: Some(media_get_time),
+        media_set_time: None,
+        media_get_state: Some(media_get_state),
+        version: 0,
+        unversioned_id: ptr::null(),
     });
 
     let _ = log::set_logger(&ObsLog);
