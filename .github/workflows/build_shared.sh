@@ -8,8 +8,8 @@ main() {
     local release_flag=""
     local target_folder="debug"
     if [ "$IS_DEPLOY" = "true" ]; then
-        release_flag="--release"
-        target_folder="release"
+        release_flag="--profile max-opt"
+        target_folder="max-opt"
     fi
 
     if [ -z "$FEATURES" ]; then
