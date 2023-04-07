@@ -14,14 +14,18 @@ crate-type = ["cdylib"]
 
 [dependencies]
 obs = { path = "obs" }
-livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features = ["software-rendering"] }
+livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features = ["software-rendering", "font-loading"] }
 log = { version = "0.4.6", features = ["serde"] }
 
 [features]
-default = ["font-loading", "auto-splitting"]
-font-loading = ["livesplit-core/font-loading"]
+default = ["auto-splitting"]
 auto-splitting = ["livesplit-core/auto-splitting"]
 
-[profile.release]
+[profile.max-opt]
+inherits = "release"
 lto = true
 panic = "abort"
+codegen-units = 1
+
+[profile.max-opt.build-override]
+opt-level = 0
