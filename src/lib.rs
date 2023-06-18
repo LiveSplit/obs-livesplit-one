@@ -8,6 +8,7 @@ use std::{
     os::raw::{c_char, c_int},
     path::{Path, PathBuf},
     ptr,
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 mod ffi;
@@ -69,9 +70,12 @@ struct UnsafeMultiThread<T>(T);
 unsafe impl<T> Sync for UnsafeMultiThread<T> {}
 unsafe impl<T> Send for UnsafeMultiThread<T> {}
 
+static TIMERS: Mutex<Vec<(PathBuf, Weak<RwLock<Timer>>)>> = Mutex::new(Vec::new());
+
 struct State {
     timer: SharedTimer,
-    splits_path: Option<PathBuf>,
+    splits_path: PathBuf,
+    can_save_splits: bool,
     #[cfg(feature = "auto-splitting")]
     auto_splitter: auto_splitting::Runtime,
     layout: Layout,
@@ -84,7 +88,8 @@ struct State {
 
 struct Settings {
     run: Run,
-    splits_path: Option<PathBuf>,
+    splits_path: PathBuf,
+    can_save_splits: bool,
     layout: Layout,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_path: String,
@@ -92,20 +97,13 @@ struct Settings {
     height: u32,
 }
 
-fn parse_run(path: &CStr) -> Option<(Run, Option<PathBuf>)> {
-    let path = path.to_str().ok()?;
-    if path.is_empty() {
-        return None;
-    }
+fn parse_run(path: &Path) -> Option<(Run, bool)> {
     let file_data = fs::read(path).ok()?;
     let run = composite::parse(&file_data, Some(Path::new(path))).ok()?;
     if run.run.is_empty() {
         return None;
     }
-    Some((
-        run.run,
-        (run.kind == TimerKind::LiveSplit).then(|| PathBuf::from(path)),
-    ))
+    Some((run.run, run.kind == TimerKind::LiveSplit))
 }
 
 fn log(level: Level, target: &str, args: &fmt::Arguments<'_>) {
@@ -137,7 +135,8 @@ fn parse_layout(path: &CStr) -> Option<Layout> {
 
 unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     let splits_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_SPLITS_PATH).cast());
-    let (run, splits_path) = parse_run(splits_path).unwrap_or_else(default_run);
+    let splits_path = PathBuf::from(splits_path.to_string_lossy().into_owned());
+    let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
 
     let layout_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LAYOUT_PATH).cast());
     let layout = parse_layout(layout_path).unwrap_or_else(Layout::default_layout);
@@ -157,6 +156,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     Settings {
         run,
         splits_path,
+        can_save_splits,
         layout,
         #[cfg(feature = "auto-splitting")]
         auto_splitter_path,
@@ -170,6 +170,7 @@ impl State {
         Settings {
             run,
             splits_path,
+            can_save_splits,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter_path,
@@ -178,7 +179,26 @@ impl State {
         }: Settings,
     ) -> Self {
         log::info!("Loading settings.");
-        let timer = Timer::new(run).unwrap().into_shared();
+
+        let timer = {
+            let mut timers = TIMERS.lock().unwrap();
+            timers.retain(|(_, timer)| timer.strong_count() > 0);
+            if let Some(timer) = timers.iter().find_map(|(path, timer)| {
+                if path == &splits_path {
+                    timer.upgrade()
+                } else {
+                    None
+                }
+            }) {
+                log::debug!("Found timer to reuse.");
+                timer
+            } else {
+                log::debug!("Storing timer for reuse.");
+                let timer = Timer::new(run).unwrap().into_shared();
+                timers.push((splits_path.clone(), Arc::downgrade(&timer)));
+                timer
+            }
+        };
 
         #[cfg(feature = "auto-splitting")]
         let auto_splitter = auto_splitting::Runtime::new(timer.clone());
@@ -199,6 +219,7 @@ impl State {
         Self {
             timer,
             splits_path,
+            can_save_splits,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
@@ -471,9 +492,9 @@ unsafe extern "C" fn save_splits(
     data: *mut c_void,
 ) -> bool {
     let state: &mut State = &mut *data.cast();
-    if let Some(path) = &state.splits_path {
+    if state.can_save_splits {
         let timer = state.timer.read().unwrap();
-        if let Ok(file) = File::create(path) {
+        if let Ok(file) = File::create(&state.splits_path) {
             let _ = save_timer(&timer, IoWrite(BufWriter::new(file)));
         }
     }
@@ -609,10 +630,10 @@ unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
     obs_data_set_default_int(settings, SETTINGS_HEIGHT, 500);
 }
 
-fn default_run() -> (Run, Option<PathBuf>) {
+fn default_run() -> (Run, bool) {
     let mut run = Run::new();
     run.push_segment(Segment::new("Time"));
-    (run, None)
+    (run, false)
 }
 
 unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
@@ -620,7 +641,30 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     let state: &mut State = &mut *data.cast();
     let settings = parse_settings(settings);
-    state.timer.write().unwrap().set_run(settings.run).unwrap();
+
+    let timer = {
+        let mut timers = TIMERS.lock().unwrap();
+        timers.retain(|(_, timer)| timer.strong_count() > 0);
+        if let Some(timer) = timers.iter().find_map(|(path, timer)| {
+            if path == &settings.splits_path {
+                timer.upgrade()
+            } else {
+                None
+            }
+        }) {
+            log::debug!("Found timer to reuse.");
+            timer
+        } else {
+            log::debug!("Storing timer for reuse.");
+            let timer = Timer::new(settings.run).unwrap().into_shared();
+            timers.push((settings.splits_path.clone(), Arc::downgrade(&timer)));
+            timer
+        }
+    };
+
+    state.splits_path = settings.splits_path;
+    state.can_save_splits = settings.can_save_splits;
+    state.timer = timer;
     state.layout = settings.layout;
 
     #[cfg(feature = "auto-splitting")]
