@@ -88,6 +88,20 @@ pub extern "C" fn blog(_log_level: c_int, _format: *const c_char) {
 }
 
 #[no_mangle]
+pub extern "C" fn obs_properties_add_bool(
+    _props: *mut obs_properties_t,
+    _name: *const c_char,
+    _description: *const c_char,
+) -> *mut obs_property_t {
+    panic!()
+}
+
+#[no_mangle]
+pub extern "C" fn obs_data_get_bool(_data: *mut obs_data_t, _name: *const c_char) -> bool {
+    panic!()
+}
+
+#[no_mangle]
 pub extern "C" fn obs_properties_add_int(
     _props: *mut obs_properties_t,
     _name: *const c_char,
@@ -157,6 +171,15 @@ pub extern "C" fn gs_technique_end_pass(_technique: *mut gs_technique_t) {
 
 #[no_mangle]
 pub extern "C" fn obs_get_base_effect(_effect: obs_base_effect) -> *mut gs_effect_t {
+    panic!()
+}
+
+#[no_mangle]
+pub extern "C" fn obs_data_set_default_bool(
+    _data: *mut obs_data_t,
+    _name: *const c_char,
+    _val: bool,
+) {
     panic!()
 }
 

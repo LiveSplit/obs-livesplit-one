@@ -52,6 +52,12 @@ extern "C" {
     ) -> *mut obs_property_t;
     pub fn obs_data_get_string(data: *mut obs_data_t, name: *const c_char) -> *const c_char;
     pub fn blog(log_level: c_int, format: *const c_char, ...);
+    pub fn obs_properties_add_bool(
+        props: *mut obs_properties_t,
+        name: *const c_char,
+        description: *const c_char,
+    ) -> *mut obs_property_t;
+    pub fn obs_data_get_bool(data: *mut obs_data_t, name: *const c_char) -> bool;
     pub fn obs_properties_add_int(
         props: *mut obs_properties_t,
         name: *const c_char,
@@ -77,6 +83,7 @@ extern "C" {
     pub fn gs_technique_end(technique: *mut gs_technique_t);
     pub fn gs_technique_end_pass(technique: *mut gs_technique_t);
     pub fn obs_get_base_effect(effect: obs_base_effect) -> *mut gs_effect_t;
+    pub fn obs_data_set_default_bool(data: *mut obs_data_t, name: *const c_char, val: bool);
     pub fn obs_data_set_default_int(data: *mut obs_data_t, name: *const c_char, val: c_longlong);
     pub fn obs_properties_add_button(
         props: *mut obs_properties_t,

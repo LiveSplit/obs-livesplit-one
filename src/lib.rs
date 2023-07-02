@@ -18,9 +18,10 @@ use ffi::{
     blog, gs_draw_sprite, gs_effect_get_param_by_name, gs_effect_get_technique,
     gs_effect_set_texture, gs_effect_t, gs_technique_begin, gs_technique_begin_pass,
     gs_technique_end, gs_technique_end_pass, gs_texture_create, gs_texture_destroy,
-    gs_texture_set_image, gs_texture_t, obs_data_get_int, obs_data_get_string,
-    obs_data_set_default_int, obs_data_t, obs_enter_graphics, obs_get_base_effect, obs_hotkey_id,
-    obs_hotkey_register_source, obs_hotkey_t, obs_leave_graphics, obs_module_t, obs_mouse_event,
+    gs_texture_set_image, gs_texture_t, obs_data_get_bool, obs_data_get_int, obs_data_get_string,
+    obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
+    obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
+    obs_leave_graphics, obs_module_t, obs_mouse_event, obs_properties_add_bool,
     obs_properties_add_button, obs_properties_add_int, obs_properties_add_path,
     obs_properties_create, obs_properties_t, obs_property_t, obs_register_source_s,
     obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
@@ -76,6 +77,7 @@ struct State {
     timer: SharedTimer,
     splits_path: PathBuf,
     can_save_splits: bool,
+    auto_save: bool,
     #[cfg(feature = "auto-splitting")]
     auto_splitter: auto_splitting::Runtime,
     layout: Layout,
@@ -90,6 +92,7 @@ struct Settings {
     run: Run,
     splits_path: PathBuf,
     can_save_splits: bool,
+    auto_save: bool,
     layout: Layout,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_path: String,
@@ -133,10 +136,21 @@ fn parse_layout(path: &CStr) -> Option<Layout> {
     layout::parser::parse(&file_data).ok()
 }
 
+fn save_splits_file(state: &mut State) -> bool {
+    if state.can_save_splits {
+        let timer = state.timer.read().unwrap();
+        if let Ok(file) = File::create(&state.splits_path) {
+            let _ = save_timer(&timer, IoWrite(BufWriter::new(file)));
+        }
+    }
+    false
+}
+
 unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     let splits_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_SPLITS_PATH).cast());
     let splits_path = PathBuf::from(splits_path.to_string_lossy().into_owned());
     let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
+    let auto_save = obs_data_get_bool(settings, SETTINGS_AUTO_SAVE);
 
     let layout_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LAYOUT_PATH).cast());
     let layout = parse_layout(layout_path).unwrap_or_else(Layout::default_layout);
@@ -157,6 +171,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
         run,
         splits_path,
         can_save_splits,
+        auto_save,
         layout,
         #[cfg(feature = "auto-splitting")]
         auto_splitter_path,
@@ -171,6 +186,7 @@ impl State {
             run,
             splits_path,
             can_save_splits,
+            auto_save,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter_path,
@@ -220,6 +236,7 @@ impl State {
             timer,
             splits_path,
             can_save_splits,
+            auto_save,
             layout,
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
@@ -270,6 +287,10 @@ unsafe extern "C" fn reset(
     if pressed {
         let state: &mut State = &mut *data.cast();
         state.timer.write().unwrap().reset(true);
+
+        if state.auto_save {
+            save_splits_file(state);
+        }
     }
 }
 
@@ -492,13 +513,7 @@ unsafe extern "C" fn save_splits(
     data: *mut c_void,
 ) -> bool {
     let state: &mut State = &mut *data.cast();
-    if state.can_save_splits {
-        let timer = state.timer.read().unwrap();
-        if let Ok(file) = File::create(&state.splits_path) {
-            let _ = save_timer(&timer, IoWrite(BufWriter::new(file)));
-        }
-    }
-    false
+    save_splits_file(state)
 }
 
 unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
@@ -537,6 +552,9 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
 
 unsafe extern "C" fn media_restart(data: *mut c_void) {
     let state: &mut State = &mut *data.cast();
+    if state.auto_save {
+        save_splits_file(state);
+    }
     let mut timer = state.timer.write().unwrap();
     timer.reset(true);
     timer.start();
@@ -545,6 +563,9 @@ unsafe extern "C" fn media_restart(data: *mut c_void) {
 unsafe extern "C" fn media_stop(data: *mut c_void) {
     let state: &mut State = &mut *data.cast();
     state.timer.write().unwrap().reset(true);
+    if state.auto_save {
+        save_splits_file(state);
+    }
 }
 
 unsafe extern "C" fn media_next(data: *mut c_void) {
@@ -582,6 +603,7 @@ unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
 const SETTINGS_WIDTH: *const c_char = cstr!("width");
 const SETTINGS_HEIGHT: *const c_char = cstr!("height");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
+const SETTINGS_AUTO_SAVE: *const c_char = cstr!("auto_save");
 const SETTINGS_LAYOUT_PATH: *const c_char = cstr!("layout_path");
 #[cfg(feature = "auto-splitting")]
 const SETTINGS_AUTO_SPLITTER_PATH: *const c_char = cstr!("auto_splitter_path");
@@ -616,6 +638,11 @@ unsafe extern "C" fn get_properties(_: *mut c_void) -> *mut obs_properties_t {
         cstr!("LiveSplit One Auto Splitter (*.wasm)"),
         ptr::null(),
     );
+    obs_properties_add_bool(
+        props,
+        SETTINGS_AUTO_SAVE,
+        cstr!("Automatically save splits file on reset"),
+    );
     obs_properties_add_button(
         props,
         SETTINGS_SAVE_SPLITS,
@@ -628,6 +655,7 @@ unsafe extern "C" fn get_properties(_: *mut c_void) -> *mut obs_properties_t {
 unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
     obs_data_set_default_int(settings, SETTINGS_WIDTH, 300);
     obs_data_set_default_int(settings, SETTINGS_HEIGHT, 500);
+    obs_data_set_default_bool(settings, SETTINGS_AUTO_SAVE, false);
 }
 
 fn default_run() -> (Run, bool) {
@@ -664,6 +692,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     state.splits_path = settings.splits_path;
     state.can_save_splits = settings.can_save_splits;
+    state.auto_save = settings.auto_save;
     state.timer = timer;
     state.layout = settings.layout;
 
