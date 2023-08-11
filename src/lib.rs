@@ -117,6 +117,7 @@ unsafe impl<T> Send for UnsafeMultiThread<T> {}
 static TIMERS: Mutex<Vec<(PathBuf, Weak<RwLock<Timer>>)>> = Mutex::new(Vec::new());
 
 struct State {
+    game_path: PathBuf,
     timer: SharedTimer,
     splits_path: PathBuf,
     can_save_splits: bool,
@@ -135,6 +136,7 @@ struct State {
 }
 
 struct Settings {
+    game_path: PathBuf,
     run: Run,
     splits_path: PathBuf,
     can_save_splits: bool,
@@ -191,6 +193,8 @@ fn save_splits_file(state: &mut State) -> bool {
 }
 
 unsafe fn parse_settings(settings: *mut obs_data_t, run_save_and_path: Option<(Run, bool, PathBuf)>) -> Settings {
+    let game_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_PATH).cast());
+    let game_path = PathBuf::from(game_path.to_string_lossy().into_owned());
 
     let (run, can_save_splits, splits_path) = match run_save_and_path {
         Some(value) => { value }
@@ -211,6 +215,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t, run_save_and_path: Option<(R
     let height = obs_data_get_int(settings, SETTINGS_HEIGHT) as u32;
 
     Settings {
+        game_path,
         run,
         splits_path,
         can_save_splits,
@@ -224,6 +229,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t, run_save_and_path: Option<(R
 impl State {
     unsafe fn new(
         Settings {
+            game_path,
             run,
             splits_path,
             can_save_splits,
@@ -266,6 +272,7 @@ impl State {
         obs_leave_graphics();
 
         Self {
+            game_path,
             timer,
             splits_path,
             can_save_splits,
@@ -552,6 +559,47 @@ unsafe extern "C" fn save_splits(
     save_splits_file(state)
 }
 
+unsafe extern "C" fn game_path_clicked(
+    _props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    data: *mut c_void,
+) -> bool {
+    let state: &mut State = &mut *data.cast();
+    
+    if state.game_path.exists() {
+        log::info!("Starting game");
+        
+        let mut process = std::process::Command::new(state.game_path.clone());
+
+        process.spawn().ok();
+        return false
+    }
+
+    log::info!("No path provided to start a game");
+    
+    false
+}
+
+unsafe extern "C" fn game_path_modified(
+    data: *mut c_void,
+    _props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let game_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_PATH).cast());
+    let game_path = PathBuf::from(game_path.to_string_lossy().into_owned());
+
+    let state: &mut State = &mut *data.cast();
+
+    if game_path == state.game_path {
+        return false;
+    }
+    
+    state.game_path = game_path;
+    
+    true
+}
+
 unsafe extern "C" fn splits_path_modified(
     data: *mut c_void,
     props: *mut obs_properties_t,
@@ -815,6 +863,8 @@ unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
 
 const SETTINGS_WIDTH: *const c_char = cstr!("width");
 const SETTINGS_HEIGHT: *const c_char = cstr!("height");
+const SETTINGS_GAME_PATH: *const c_char = cstr!("game_path");
+const SETTINGS_START_GAME: *const c_char = cstr!("start_game");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
 const SETTINGS_AUTO_SAVE: *const c_char = cstr!("auto_save");
 const SETTINGS_AUTO_SPLITTER_INFO: *const c_char = cstr!("auto_splitter_info");
@@ -842,6 +892,20 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     let props = obs_properties_create();
     obs_properties_add_int(props, SETTINGS_WIDTH, cstr!("Width"), 10, 8200, 10);
     obs_properties_add_int(props, SETTINGS_HEIGHT, cstr!("Height"), 10, 8200, 10);
+    let game_path = obs_properties_add_path(
+        props,
+        SETTINGS_GAME_PATH,
+        cstr!("Game path"),
+        OBS_PATH_FILE,
+        cstr!("Executable files (*)"),
+        ptr::null(),
+    );
+    obs_properties_add_button(
+        props,
+        SETTINGS_START_GAME,
+        cstr!("Start game"),
+        Some(game_path_clicked)
+    );
     let splits_path = obs_properties_add_path(
         props,
         SETTINGS_SPLITS_PATH,
@@ -899,6 +963,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         cstr!("Save Splits"),
         Some(save_splits),
     );
+    obs_property_set_modified_callback2(game_path, Some(game_path_modified), data);
     obs_property_set_modified_callback2(splits_path, Some(splits_path_modified), data);
 
     let run = match state.timer.read() {
