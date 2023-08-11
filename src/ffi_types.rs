@@ -39,6 +39,12 @@ pub struct gs_texture {
 pub type obs_base_effect = u32;
 pub const OBS_EFFECT_PREMULTIPLIED_ALPHA: obs_base_effect = 7;
 
+pub type obs_text_type = u32;
+pub const OBS_TEXT_DEFAULT: obs_text_type = 0;
+pub const OBS_TEXT_PASSWORD: obs_text_type = 1;
+pub const OBS_TEXT_MULTILINE: obs_text_type = 2;
+pub const OBS_TEXT_INFO: obs_text_type = 3;
+
 pub type obs_data_t = obs_data;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -98,6 +104,23 @@ pub type obs_property_clicked_t = Option<
         props: *mut obs_properties_t,
         property: *mut obs_property_t,
         data: *mut c_void,
+    ) -> bool,
+>;
+
+pub type obs_property_modified_t = Option<
+    unsafe extern "C" fn(
+        props: *mut obs_properties_t,
+        property: *mut obs_property_t,
+        settings: *mut obs_data_t,
+    ) -> bool,
+>;
+
+pub type obs_property_modified2_t = Option<
+    unsafe extern "C" fn(
+        private: *mut c_void,
+        props: *mut obs_properties_t,
+        property: *mut obs_property_t,
+        settings: *mut obs_data_t,
     ) -> bool,
 >;
 
