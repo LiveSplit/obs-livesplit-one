@@ -5,7 +5,7 @@ A plugin for OBS Studio that allows adding LiveSplit One as a source.
 ## How to install
 
 Download the latest release for your operating system from the
-[Releases](https://github.com/CryZe/obs-livesplit-one/releases).
+[Releases](https://github.com/LiveSplit/obs-livesplit-one/releases).
 
 ### Windows
 
