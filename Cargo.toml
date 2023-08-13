@@ -18,7 +18,7 @@ livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features
 log = { version = "0.4.6", features = ["serde"] }
 
 # crates needed for the auto splitter management code to work as expected 
-reqwest = { version = "0.11.18", features = ["blocking"] }
+reqwest = { version = "0.11.18", features = ["blocking", "rustls-tls"] }
 hyperx = "1.4.0"
 quick-xml = { version = "0.29.0", features = ["serialize", "overlapped-lists"] }
 serde = { version = "1.0.166", features = ["serde_derive"] }
