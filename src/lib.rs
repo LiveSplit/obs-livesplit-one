@@ -67,7 +67,7 @@ use {
 
 macro_rules! cstr {
     ($f:literal) => {
-        concat!($f, '\0').as_ptr().cast()
+        concat!($f, '\0').as_ptr().cast::<c_char>()
     };
 }
 
@@ -145,6 +145,7 @@ struct State {
     texture: *mut gs_texture_t,
     width: u32,
     height: u32,
+    activated: bool,
 }
 
 struct Settings {
@@ -259,6 +260,7 @@ impl State {
             texture,
             width,
             height,
+            activated: false,
         }
     }
 
@@ -288,10 +290,16 @@ unsafe extern "C" fn split(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state.global_timer.timer.write().unwrap().split_or_start();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state.global_timer.timer.write().unwrap().split_or_start();
 }
 
 unsafe extern "C" fn reset(
@@ -300,13 +308,19 @@ unsafe extern "C" fn reset(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state.global_timer.timer.write().unwrap().reset(true);
+    if !pressed {
+        return;
+    }
 
-        if state.auto_save {
-            save_splits_file(state);
-        }
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state.global_timer.timer.write().unwrap().reset(true);
+
+    if state.auto_save {
+        save_splits_file(state);
     }
 }
 
@@ -316,10 +330,16 @@ unsafe extern "C" fn undo(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state.global_timer.timer.write().unwrap().undo_split();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state.global_timer.timer.write().unwrap().undo_split();
 }
 
 unsafe extern "C" fn skip(
@@ -328,10 +348,16 @@ unsafe extern "C" fn skip(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state.global_timer.timer.write().unwrap().skip_split();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state.global_timer.timer.write().unwrap().skip_split();
 }
 
 unsafe extern "C" fn pause(
@@ -340,15 +366,21 @@ unsafe extern "C" fn pause(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state
-            .global_timer
-            .timer
-            .write()
-            .unwrap()
-            .toggle_pause_or_start();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state
+        .global_timer
+        .timer
+        .write()
+        .unwrap()
+        .toggle_pause_or_start();
 }
 
 unsafe extern "C" fn undo_all_pauses(
@@ -357,10 +389,16 @@ unsafe extern "C" fn undo_all_pauses(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state.global_timer.timer.write().unwrap().undo_all_pauses();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state.global_timer.timer.write().unwrap().undo_all_pauses();
 }
 
 unsafe extern "C" fn previous_comparison(
@@ -369,15 +407,21 @@ unsafe extern "C" fn previous_comparison(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state
-            .global_timer
-            .timer
-            .write()
-            .unwrap()
-            .switch_to_previous_comparison();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state
+        .global_timer
+        .timer
+        .write()
+        .unwrap()
+        .switch_to_previous_comparison();
 }
 
 unsafe extern "C" fn next_comparison(
@@ -386,15 +430,21 @@ unsafe extern "C" fn next_comparison(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state
-            .global_timer
-            .timer
-            .write()
-            .unwrap()
-            .switch_to_next_comparison();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state
+        .global_timer
+        .timer
+        .write()
+        .unwrap()
+        .switch_to_next_comparison();
 }
 
 unsafe extern "C" fn toggle_timing_method(
@@ -403,15 +453,21 @@ unsafe extern "C" fn toggle_timing_method(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    if pressed {
-        let state: &mut State = &mut *data.cast();
-        state
-            .global_timer
-            .timer
-            .write()
-            .unwrap()
-            .toggle_timing_method();
+    if !pressed {
+        return;
     }
+
+    let state: &mut State = &mut *data.cast();
+    if !state.activated {
+        return;
+    }
+
+    state
+        .global_timer
+        .timer
+        .write()
+        .unwrap()
+        .toggle_timing_method();
 }
 
 unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
@@ -947,6 +1003,16 @@ unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
     obs_data_set_default_bool(settings, SETTINGS_AUTO_SAVE, false);
 }
 
+unsafe extern "C" fn activate(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    state.activated = true;
+}
+
+unsafe extern "C" fn deactivate(data: *mut c_void) {
+    let state: &mut State = &mut *data.cast();
+    state.activated = false;
+}
+
 fn default_run() -> (Run, bool) {
     let mut run = Run::new();
     run.push_segment(Segment::new("Time"));
@@ -1056,8 +1122,8 @@ pub extern "C" fn obs_module_load() -> bool {
         get_defaults: Some(get_defaults),
         update: Some(update),
         icon_type: OBS_ICON_TYPE_GAME_CAPTURE,
-        activate: None,
-        deactivate: None,
+        activate: Some(activate),
+        deactivate: Some(deactivate),
         show: None,
         hide: None,
         video_tick: None,
