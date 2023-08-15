@@ -208,14 +208,14 @@ pub extern "C" fn obs_properties_add_text(
     _name: *const c_char,
     _description: *const c_char,
     _text_type: obs_text_type,
-) -> *mut obs_property_t { 
-    panic!() 
+) -> *mut obs_property_t {
+    panic!()
 }
 #[no_mangle]
 pub extern "C" fn obs_property_set_modified_callback2(
     _prop: *mut obs_property_t,
     _modified2_callback: obs_property_modified2_t,
-    _private: *mut c_void
+    _private: *mut c_void,
 ) {
     panic!()
 }
@@ -227,10 +227,7 @@ pub extern "C" fn obs_property_set_description(
     panic!()
 }
 #[no_mangle]
-pub extern "C" fn obs_property_set_enabled(
-    _prop: *mut obs_property_t,
-    _enabled: bool
-) {
+pub extern "C" fn obs_property_set_enabled(_prop: *mut obs_property_t, _enabled: bool) {
     panic!()
 }
 #[no_mangle]
@@ -241,6 +238,9 @@ pub extern "C" fn obs_properties_get(
     panic!()
 }
 #[no_mangle]
-pub extern "C" fn obs_module_get_config_path(_module: *mut obs_module_t, _file: *const c_char) -> *const c_char {
+pub extern "C" fn obs_module_get_config_path(
+    _module: *mut obs_module_t,
+    _file: *const c_char,
+) -> *const c_char {
     panic!()
 }

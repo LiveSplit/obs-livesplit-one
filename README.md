@@ -39,5 +39,5 @@ name, where you can set hotkeys for the various actions.
 
 If you add multiple sources that each use the same splits, but different
 layouts, they all share the same state. This allows for a lot more complex
-layouts than what is traditionally possible where could for example show the
+layouts than what is traditionally possible where you could for example show the
 splits on a completely different part of your stream than the timer itself.
