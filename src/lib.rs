@@ -620,7 +620,32 @@ unsafe extern "C" fn start_game_clicked(
 
         let mut process = Command::new(state.game_path.clone());
 
-        process.spawn().ok();
+        let _child = process.spawn();
+
+        #[cfg(unix)]
+        {
+            // For Unix systems only, spawn a new thread that waits for the process to exit.
+            // This avoids keeping the process in a zombie state and never letting go of it until
+            // the plugin is unloaded
+
+            let mut child = match _child {
+                Ok(child) => child,
+                Err(e) => {
+                    warn!("Failure starting the game process {e}");
+                    return false;
+                }
+            };
+
+            std::thread::spawn(move || match child.wait() {
+                Ok(exit_status) => {
+                    info!("Game process exited with {}", exit_status);
+                }
+                Err(e) => {
+                    warn!("Failure waiting for the game process' exit: {e}");
+                }
+            });
+        }
+
         return false;
     }
 
