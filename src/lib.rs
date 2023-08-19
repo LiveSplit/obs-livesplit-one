@@ -16,6 +16,7 @@ use std::{
 };
 
 #[cfg(all(unix, feature = "auto-splitting"))]
+#[cfg(unix)]
 use std::thread;
 
 #[cfg(feature = "auto-splitting")]
