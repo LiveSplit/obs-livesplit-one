@@ -15,6 +15,9 @@ use std::{
     },
 };
 
+#[cfg(all(unix, feature = "auto-splitting"))]
+use std::thread;
+
 #[cfg(feature = "auto-splitting")]
 mod auto_splitters;
 mod ffi;
@@ -620,7 +623,29 @@ unsafe extern "C" fn start_game_clicked(
 
         let mut process = Command::new(state.game_path.clone());
 
-        process.spawn().ok();
+        let child = process.spawn().ok();
+        
+        #[cfg(unix)]
+        {
+            // For Unix systems only, spawn a new thread that waits for the process to exit.
+            // This avoids keeping the process in a zombie state and never letting go of it until
+            // the plugin is unloaded
+            thread::spawn(move || {
+                if child.is_none() {
+                    warn!("Failure starting the game process");
+                    return; 
+                };
+                
+                let exit_status = child.unwrap().wait();
+                if let Err(e) = exit_status {
+                    warn!("Failure waiting for the game process' exit: {e}");
+                    return;
+                };
+                
+                info!("Game process exited with {}", exit_status.unwrap())
+            });
+        }
+        
         return false;
     }
 
