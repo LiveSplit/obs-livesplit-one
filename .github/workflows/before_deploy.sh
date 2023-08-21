@@ -15,7 +15,9 @@ main() {
         mkdir -p $stage/obs-livesplit-one/bin/$PLUGIN_BITS
         cp target/$TARGET/max-opt/libobs_livesplit_one.so $stage/obs-livesplit-one/bin/$PLUGIN_BITS/libobs-livesplit-one.so
     elif [ "$OS_NAME" = "macOS-latest" ]; then
-        cp target/$TARGET/max-opt/libobs_livesplit_one.dylib $stage/obs-livesplit-one.so
+        mkdir -p $stage/obs-livesplit-one.plugin/Contents/MacOS
+        mkdir -p $stage/obs-livesplit-one.plugin/Contents/Resources
+        cp target/$TARGET/max-opt/libobs_livesplit_one.dylib $stage/obs-livesplit-one.plugin/Contents/MacOS/obs-livesplit-one.so
     elif [ "$OS_NAME" = "windows-latest" ]; then
         cp target/$TARGET/max-opt/obs_livesplit_one.dll $stage/obs-livesplit-one.dll
     fi

@@ -21,7 +21,7 @@ Download the latest release for your operating system from the
 
 - Right click your `OBS` -> Options -> Show in Finder
 - Right click the `OBS.app` -> Show Package Contents
-- Drag `obs-livesplit-one.so` into `Contents/PlugIns`
+- Drag `obs-livesplit-one.plugin` into `Contents/PlugIns`
 
 ## Usage
 
