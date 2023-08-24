@@ -57,7 +57,7 @@ use {
         auto_splitters::{GetListFromFileError, GetListFromGithubError},
         ffi::{
             obs_properties_add_text, obs_properties_get, obs_property_set_description,
-            obs_property_set_enabled, OBS_TEXT_INFO,
+            obs_property_set_enabled, obs_property_set_visible, OBS_TEXT_INFO,
         },
     },
     livesplit_core::auto_splitting,
@@ -136,6 +136,10 @@ struct GlobalTimer {
 static TIMERS: Mutex<Vec<Weak<GlobalTimer>>> = Mutex::new(Vec::new());
 
 struct State {
+    #[cfg(feature = "auto-splitting")]
+    local_auto_splitter: bool,
+    #[cfg(feature = "auto-splitting")]
+    local_auto_splitter_path: PathBuf,
     game_path: PathBuf,
     global_timer: Arc<GlobalTimer>,
     auto_save: bool,
@@ -149,6 +153,10 @@ struct State {
 }
 
 struct Settings {
+    #[cfg(feature = "auto-splitting")]
+    local_auto_splitter: bool,
+    #[cfg(feature = "auto-splitting")]
+    local_auto_splitter_path: PathBuf,
     game_path: PathBuf,
     splits_path: PathBuf,
     auto_save: bool,
@@ -204,6 +212,15 @@ fn save_splits_file(state: &State) -> bool {
 }
 
 unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
+    #[cfg(feature = "auto-splitting")]
+    let local_auto_splitter = obs_data_get_bool(settings, SETTINGS_LOCAL_AUTO_SPLITTER);
+    #[cfg(feature = "auto-splitting")]
+    let local_auto_splitter_path =
+        CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LOCAL_AUTO_SPLITTER_PATH).cast());
+    #[cfg(feature = "auto-splitting")]
+    let local_auto_splitter_path =
+        PathBuf::from(local_auto_splitter_path.to_string_lossy().into_owned());
+
     let game_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_PATH).cast());
     let game_path = PathBuf::from(game_path.to_string_lossy().into_owned());
 
@@ -219,6 +236,10 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     let height = obs_data_get_int(settings, SETTINGS_HEIGHT) as u32;
 
     Settings {
+        #[cfg(feature = "auto-splitting")]
+        local_auto_splitter,
+        #[cfg(feature = "auto-splitting")]
+        local_auto_splitter_path,
         game_path,
         splits_path,
         auto_save,
@@ -231,6 +252,10 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
 impl State {
     unsafe fn new(
         Settings {
+            #[cfg(feature = "auto-splitting")]
+            local_auto_splitter,
+            #[cfg(feature = "auto-splitting")]
+            local_auto_splitter_path,
             game_path,
             splits_path,
             auto_save,
@@ -250,7 +275,19 @@ impl State {
         let texture = gs_texture_create(width, height, GS_RGBA, 1, ptr::null_mut(), GS_DYNAMIC);
         obs_leave_graphics();
 
+        #[cfg(feature = "auto-splitting")]
+        if local_auto_splitter {
+            global_timer
+                .auto_splitter
+                .load_script_blocking(local_auto_splitter_path.clone())
+                .ok();
+        }
+
         Self {
+            #[cfg(feature = "auto-splitting")]
+            local_auto_splitter,
+            #[cfg(feature = "auto-splitting")]
+            local_auto_splitter_path,
             game_path,
             global_timer,
             auto_save,
@@ -654,6 +691,102 @@ unsafe extern "C" fn start_game_clicked(
     false
 }
 
+#[cfg(feature = "auto-splitting")]
+unsafe extern "C" fn use_local_auto_splitter_modified(
+    data: *mut c_void,
+    props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let state: &mut State = &mut *data.cast();
+
+    let use_local_auto_splitter = obs_data_get_bool(settings, SETTINGS_LOCAL_AUTO_SPLITTER);
+
+    // No UI change needed
+    if state.local_auto_splitter == use_local_auto_splitter {
+        return false;
+    }
+
+    state.local_auto_splitter = use_local_auto_splitter;
+
+    let auto_splitter_activate = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_ACTIVATE);
+    let auto_splitter_info = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_INFO);
+    let auto_splitter_website = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_WEBSITE);
+
+    let local_auto_splitter_path = obs_properties_get(props, SETTINGS_LOCAL_AUTO_SPLITTER_PATH);
+
+    state
+        .global_timer
+        .auto_splitter_is_enabled
+        .store(false, atomic::Ordering::Relaxed);
+
+    state
+        .global_timer
+        .auto_splitter
+        .unload_script_blocking()
+        .ok();
+
+    if state.local_auto_splitter {
+        obs_property_set_visible(auto_splitter_info, false);
+        obs_property_set_visible(auto_splitter_activate, false);
+        obs_property_set_visible(auto_splitter_website, false);
+
+        obs_property_set_visible(local_auto_splitter_path, true);
+
+        state
+            .global_timer
+            .auto_splitter
+            .load_script_blocking(state.local_auto_splitter_path.clone())
+            .ok();
+    } else {
+        obs_property_set_visible(auto_splitter_info, true);
+        obs_property_set_visible(auto_splitter_activate, true);
+        obs_property_set_visible(auto_splitter_website, true);
+
+        obs_property_set_visible(local_auto_splitter_path, false);
+    }
+
+    obs_property_set_description(auto_splitter_activate, cstr!("Activate"));
+
+    update_auto_splitter_ui(
+        auto_splitter_info,
+        auto_splitter_website,
+        auto_splitter_activate,
+        state.global_timer.timer.read().unwrap().run().game_name(),
+    );
+
+    true
+}
+
+#[cfg(feature = "auto-splitting")]
+unsafe extern "C" fn local_auto_splitter_path_modified(
+    data: *mut c_void,
+    _props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let local_auto_splitter_path =
+        CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LOCAL_AUTO_SPLITTER_PATH).cast());
+    let local_auto_splitter_path =
+        PathBuf::from(local_auto_splitter_path.to_string_lossy().into_owned());
+
+    let state: &mut State = &mut *data.cast();
+
+    if state.local_auto_splitter_path == local_auto_splitter_path {
+        return false;
+    }
+
+    state.local_auto_splitter_path = local_auto_splitter_path;
+
+    state
+        .global_timer
+        .auto_splitter
+        .load_script_blocking(state.local_auto_splitter_path.clone())
+        .ok();
+
+    true
+}
+
 unsafe extern "C" fn splits_path_modified(
     data: *mut c_void,
     _props: *mut obs_properties_t,
@@ -916,6 +1049,10 @@ const SETTINGS_START_GAME: *const c_char = cstr!("start_game");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
 const SETTINGS_AUTO_SAVE: *const c_char = cstr!("auto_save");
 #[cfg(feature = "auto-splitting")]
+const SETTINGS_LOCAL_AUTO_SPLITTER: *const c_char = cstr!("local_auto_splitter");
+#[cfg(feature = "auto-splitting")]
+const SETTINGS_LOCAL_AUTO_SPLITTER_PATH: *const c_char = cstr!("local_auto_splitter_path");
+#[cfg(feature = "auto-splitting")]
 const SETTINGS_AUTO_SPLITTER_INFO: *const c_char = cstr!("auto_splitter_info");
 #[cfg(feature = "auto-splitting")]
 const SETTINGS_AUTO_SPLITTER_ACTIVATE: *const c_char = cstr!("auto_splitter_activate");
@@ -981,6 +1118,33 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     {
         let state: &mut State = &mut *data.cast();
 
+        let use_local_auto_splitter = obs_properties_add_bool(
+            props,
+            SETTINGS_LOCAL_AUTO_SPLITTER,
+            cstr!("Use local auto splitter"),
+        );
+
+        obs_property_set_modified_callback2(
+            use_local_auto_splitter,
+            Some(use_local_auto_splitter_modified),
+            data,
+        );
+
+        let local_auto_splitter_path = obs_properties_add_path(
+            props,
+            SETTINGS_LOCAL_AUTO_SPLITTER_PATH,
+            cstr!("Local Auto Splitter file"),
+            OBS_PATH_FILE,
+            cstr!("LiveSplit One Auto Splitter (*.wasm)"),
+            ptr::null(),
+        );
+
+        obs_property_set_modified_callback2(
+            local_auto_splitter_path,
+            Some(local_auto_splitter_path_modified),
+            data,
+        );
+
         let info_text = obs_properties_add_text(
             props,
             SETTINGS_AUTO_SPLITTER_INFO,
@@ -1017,6 +1181,20 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             activate_button,
             state.global_timer.timer.read().unwrap().run().game_name(),
         );
+
+        if state.local_auto_splitter {
+            obs_property_set_visible(info_text, false);
+            obs_property_set_visible(activate_button, false);
+            obs_property_set_visible(website_button, false);
+
+            obs_property_set_visible(local_auto_splitter_path, true);
+        } else {
+            obs_property_set_visible(info_text, true);
+            obs_property_set_visible(activate_button, true);
+            obs_property_set_visible(website_button, true);
+
+            obs_property_set_visible(local_auto_splitter_path, false);
+        }
     }
 
     props
