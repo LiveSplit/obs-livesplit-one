@@ -619,7 +619,7 @@ unsafe extern "C" fn game_path_modified(
 
     let state: &mut State = &mut *data.cast();
     state.game_path = game_path;
-    
+
     false
 }
 
