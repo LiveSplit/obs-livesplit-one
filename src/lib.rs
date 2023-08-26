@@ -277,10 +277,7 @@ impl State {
 
         #[cfg(feature = "auto-splitting")]
         if local_auto_splitter {
-            global_timer
-                .auto_splitter
-                .load_script_blocking(local_auto_splitter_path.clone())
-                .ok();
+            auto_splitter_load(&global_timer, &local_auto_splitter_path)
         }
 
         Self {
@@ -715,35 +712,16 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
 
     let local_auto_splitter_path = obs_properties_get(props, SETTINGS_LOCAL_AUTO_SPLITTER_PATH);
 
-    state
-        .global_timer
-        .auto_splitter_is_enabled
-        .store(false, atomic::Ordering::Relaxed);
+    auto_splitter_unload(&state.global_timer);
 
-    state
-        .global_timer
-        .auto_splitter
-        .unload_script_blocking()
-        .ok();
+    obs_property_set_visible(auto_splitter_info, !state.local_auto_splitter);
+    obs_property_set_visible(auto_splitter_activate, !state.local_auto_splitter);
+    obs_property_set_visible(auto_splitter_website, !state.local_auto_splitter);
+
+    obs_property_set_visible(local_auto_splitter_path, state.local_auto_splitter);
 
     if state.local_auto_splitter {
-        obs_property_set_visible(auto_splitter_info, false);
-        obs_property_set_visible(auto_splitter_activate, false);
-        obs_property_set_visible(auto_splitter_website, false);
-
-        obs_property_set_visible(local_auto_splitter_path, true);
-
-        state
-            .global_timer
-            .auto_splitter
-            .load_script_blocking(state.local_auto_splitter_path.clone())
-            .ok();
-    } else {
-        obs_property_set_visible(auto_splitter_info, true);
-        obs_property_set_visible(auto_splitter_activate, true);
-        obs_property_set_visible(auto_splitter_website, true);
-
-        obs_property_set_visible(local_auto_splitter_path, false);
+        auto_splitter_load(&state.global_timer, &state.local_auto_splitter_path);
     }
 
     obs_property_set_description(auto_splitter_activate, cstr!("Activate"));
@@ -778,11 +756,7 @@ unsafe extern "C" fn local_auto_splitter_path_modified(
 
     state.local_auto_splitter_path = local_auto_splitter_path;
 
-    state
-        .global_timer
-        .auto_splitter
-        .load_script_blocking(state.local_auto_splitter_path.clone())
-        .ok();
+    auto_splitter_load(&state.global_timer, &state.local_auto_splitter_path);
 
     true
 }
@@ -859,12 +833,30 @@ unsafe fn update_auto_splitter_ui(
 }
 
 #[cfg(feature = "auto-splitting")]
-fn auto_splitter_unload(state: &mut State) {
-    state
-        .global_timer
+fn auto_splitter_unload(global_timer: &Arc<GlobalTimer>) {
+    global_timer.auto_splitter.unload_script_blocking().ok();
+
+    global_timer
+        .auto_splitter_is_enabled
+        .store(false, atomic::Ordering::Relaxed);
+}
+
+#[cfg(feature = "auto-splitting")]
+fn auto_splitter_load(global_timer: &Arc<GlobalTimer>, path: &PathBuf) {
+    let enabled = match global_timer
         .auto_splitter
-        .unload_script_blocking()
-        .ok();
+        .load_script_blocking(path.clone())
+    {
+        Ok(_) => true,
+        Err(e) => {
+            warn!("Auto Splitter could not be loaded: {e}");
+            false
+        }
+    };
+
+    global_timer
+        .auto_splitter_is_enabled
+        .store(enabled, atomic::Ordering::Relaxed);
 }
 
 #[cfg(feature = "auto-splitting")]
@@ -892,18 +884,14 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
             get_auto_splitters_path(),
         ) {
             Some(auto_splitter_path) => {
-                state
-                    .global_timer
-                    .auto_splitter
-                    .load_script_blocking(auto_splitter_path.clone())
-                    .ok();
+                auto_splitter_load(&state.global_timer, &auto_splitter_path);
             }
             None => {
                 error!("Couldn't download the auto splitter files.")
             }
         }
     } else {
-        auto_splitter_unload(state);
+        auto_splitter_unload(&state.global_timer);
     }
 
     true
@@ -1182,19 +1170,11 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             state.global_timer.timer.read().unwrap().run().game_name(),
         );
 
-        if state.local_auto_splitter {
-            obs_property_set_visible(info_text, false);
-            obs_property_set_visible(activate_button, false);
-            obs_property_set_visible(website_button, false);
+        obs_property_set_visible(info_text, !state.local_auto_splitter);
+        obs_property_set_visible(activate_button, !state.local_auto_splitter);
+        obs_property_set_visible(website_button, !state.local_auto_splitter);
 
-            obs_property_set_visible(local_auto_splitter_path, true);
-        } else {
-            obs_property_set_visible(info_text, true);
-            obs_property_set_visible(activate_button, true);
-            obs_property_set_visible(website_button, true);
-
-            obs_property_set_visible(local_auto_splitter_path, false);
-        }
+        obs_property_set_visible(local_auto_splitter_path, state.local_auto_splitter);
     }
 
     props
