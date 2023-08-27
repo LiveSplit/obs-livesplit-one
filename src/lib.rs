@@ -704,25 +704,17 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
         return false;
     }
 
-    state.local_auto_splitter = use_local_auto_splitter;
-
     let auto_splitter_activate = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_ACTIVATE);
     let auto_splitter_info = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_INFO);
     let auto_splitter_website = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_WEBSITE);
 
     let local_auto_splitter_path = obs_properties_get(props, SETTINGS_LOCAL_AUTO_SPLITTER_PATH);
 
-    auto_splitter_unload(&state.global_timer);
+    obs_property_set_visible(auto_splitter_info, !use_local_auto_splitter);
+    obs_property_set_visible(auto_splitter_activate, !use_local_auto_splitter);
+    obs_property_set_visible(auto_splitter_website, !use_local_auto_splitter);
 
-    obs_property_set_visible(auto_splitter_info, !state.local_auto_splitter);
-    obs_property_set_visible(auto_splitter_activate, !state.local_auto_splitter);
-    obs_property_set_visible(auto_splitter_website, !state.local_auto_splitter);
-
-    obs_property_set_visible(local_auto_splitter_path, state.local_auto_splitter);
-
-    if state.local_auto_splitter {
-        auto_splitter_load(&state.global_timer, &state.local_auto_splitter_path);
-    }
+    obs_property_set_visible(local_auto_splitter_path, use_local_auto_splitter);
 
     obs_property_set_description(auto_splitter_activate, cstr!("Activate"));
 
@@ -732,31 +724,6 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
         auto_splitter_activate,
         state.global_timer.timer.read().unwrap().run().game_name(),
     );
-
-    true
-}
-
-#[cfg(feature = "auto-splitting")]
-unsafe extern "C" fn local_auto_splitter_path_modified(
-    data: *mut c_void,
-    _props: *mut obs_properties_t,
-    _prop: *mut obs_property_t,
-    settings: *mut obs_data_t,
-) -> bool {
-    let local_auto_splitter_path =
-        CStr::from_ptr(obs_data_get_string(settings, SETTINGS_LOCAL_AUTO_SPLITTER_PATH).cast());
-    let local_auto_splitter_path =
-        PathBuf::from(local_auto_splitter_path.to_string_lossy().into_owned());
-
-    let state: &mut State = &mut *data.cast();
-
-    if state.local_auto_splitter_path == local_auto_splitter_path {
-        return false;
-    }
-
-    state.local_auto_splitter_path = local_auto_splitter_path;
-
-    auto_splitter_load(&state.global_timer, &state.local_auto_splitter_path);
 
     true
 }
@@ -1127,12 +1094,6 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             ptr::null(),
         );
 
-        obs_property_set_modified_callback2(
-            local_auto_splitter_path,
-            Some(local_auto_splitter_path_modified),
-            data,
-        );
-
         let info_text = obs_properties_add_text(
             props,
             SETTINGS_AUTO_SPLITTER_INFO,
@@ -1212,6 +1173,22 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     state.auto_save = settings.auto_save;
     state.layout = settings.layout;
+
+    #[cfg(feature = "auto-splitting")]
+    {
+        if state.local_auto_splitter != settings.local_auto_splitter
+            || state.local_auto_splitter_path != settings.local_auto_splitter_path
+        {
+            auto_splitter_unload(&state.global_timer);
+
+            state.local_auto_splitter = settings.local_auto_splitter;
+            state.local_auto_splitter_path = settings.local_auto_splitter_path;
+
+            if state.local_auto_splitter {
+                auto_splitter_load(&state.global_timer, &state.local_auto_splitter_path);
+            }
+        }
+    }
 
     if state.width != settings.width || state.height != settings.height {
         state.width = settings.width;
