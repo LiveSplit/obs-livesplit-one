@@ -608,21 +608,6 @@ unsafe extern "C" fn save_splits(
     save_splits_file(state)
 }
 
-unsafe extern "C" fn game_path_modified(
-    data: *mut c_void,
-    _props: *mut obs_properties_t,
-    _prop: *mut obs_property_t,
-    settings: *mut obs_data_t,
-) -> bool {
-    let game_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_PATH).cast());
-    let game_path = PathBuf::from(game_path.to_string_lossy().into_owned());
-
-    let state: &mut State = &mut *data.cast();
-    state.game_path = game_path;
-
-    false
-}
-
 unsafe extern "C" fn start_game_clicked(
     _props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
@@ -975,7 +960,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         ptr::null(),
     );
 
-    let game_path = obs_properties_add_path(
+    obs_properties_add_path(
         props,
         SETTINGS_GAME_PATH,
         cstr!("Game path"),
@@ -991,7 +976,6 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     );
 
     obs_property_set_modified_callback2(splits_path, Some(splits_path_modified), data);
-    obs_property_set_modified_callback2(game_path, Some(game_path_modified), data);
 
     #[cfg(feature = "auto-splitting")]
     {
@@ -1068,6 +1052,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     handle_splits_path_change(state, settings.splits_path);
 
+    state.game_path = settings.game_path;
     state.auto_save = settings.auto_save;
     state.layout = settings.layout;
 
