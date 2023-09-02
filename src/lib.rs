@@ -1052,6 +1052,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     handle_splits_path_change(state, settings.splits_path);
 
+    state.game_path = settings.game_path;
     state.auto_save = settings.auto_save;
     state.layout = settings.layout;
 
