@@ -108,6 +108,8 @@ extern "C" {
     #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_enabled(prop: *mut obs_property_t, enabled: bool);
     #[cfg(feature = "auto-splitting")]
+    pub fn obs_property_set_visible(prop: *mut obs_property_t, visible: bool);
+    #[cfg(feature = "auto-splitting")]
     pub fn obs_properties_get(
         props: *mut obs_properties_t,
         prop: *const c_char,

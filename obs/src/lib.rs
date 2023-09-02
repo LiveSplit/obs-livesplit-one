@@ -231,6 +231,10 @@ pub extern "C" fn obs_property_set_enabled(_prop: *mut obs_property_t, _enabled:
     panic!()
 }
 #[no_mangle]
+pub extern "C" fn obs_property_set_visible(_prop: *mut obs_property_t, _visible: bool) {
+    panic!()
+}
+#[no_mangle]
 pub extern "C" fn obs_properties_get(
     _props: *mut obs_properties_t,
     _prop: *const c_char,
