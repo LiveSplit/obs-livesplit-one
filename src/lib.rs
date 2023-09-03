@@ -48,12 +48,18 @@ use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
-        obs_properties_add_text, obs_properties_get, obs_property_set_description,
-        obs_property_set_enabled, obs_property_set_visible, OBS_TEXT_INFO,
+        obs_data_set_bool, obs_data_set_string, obs_properties_add_list, obs_properties_add_text,
+        obs_properties_get, obs_property_list_add_string, obs_property_set_description,
+        obs_property_set_enabled, obs_property_set_visible, OBS_COMBO_FORMAT_STRING,
+        OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting,
+    livesplit_core::auto_splitting::{SettingValue, UserSetting, UserSettingKind},
     log::error,
-    std::sync::atomic::{self, AtomicBool},
+    std::{
+        ffi::CString,
+        sync::atomic::{self, AtomicBool},
+    },
 };
 
 macro_rules! cstr {
@@ -100,6 +106,10 @@ struct State {
     width: u32,
     height: u32,
     activated: bool,
+    #[cfg(feature = "auto-splitting")]
+    auto_splitter_settings: Vec<UserSetting>,
+    #[cfg(feature = "auto-splitting")]
+    obs_settings: *mut obs_data_t,
 }
 
 struct Settings {
@@ -214,6 +224,7 @@ impl State {
             width,
             height,
         }: Settings,
+        #[cfg(feature = "auto-splitting")] obs_settings: *mut obs_data_t,
     ) -> Self {
         debug!("Loading settings.");
 
@@ -244,6 +255,10 @@ impl State {
             width,
             height,
             activated: false,
+            #[cfg(feature = "auto-splitting")]
+            auto_splitter_settings: Vec::<UserSetting>::default(),
+            #[cfg(feature = "auto-splitting")]
+            obs_settings,
         }
     }
 
@@ -454,6 +469,9 @@ unsafe extern "C" fn toggle_timing_method(
 }
 
 unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
+    #[cfg(feature = "auto-splitting")]
+    let data = Box::into_raw(Box::new(State::new(parse_settings(settings), settings))).cast();
+    #[cfg(not(feature = "auto-splitting"))]
     let data = Box::into_raw(Box::new(State::new(parse_settings(settings)))).cast();
 
     obs_hotkey_register_source(
@@ -635,6 +653,150 @@ unsafe extern "C" fn start_game_clicked(
     warn!("No path provided to start a game.");
 
     false
+}
+
+#[cfg(feature = "auto-splitting")]
+const DEFAULT_AUTO_SPLITTER_LIST_SETTING: *const c_char = cstr!("obs-livesplit-one-default-choice");
+#[cfg(feature = "auto-splitting")]
+const DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP: *const c_char = cstr!("Waiting for setting selection");
+
+#[cfg(feature = "auto-splitting")]
+unsafe extern "C" fn settings_list_modified(
+    data: *mut c_void,
+    props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
+    let list_setting_string = CStr::from_ptr(obs_data_get_string(
+        settings,
+        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
+    ));
+
+    let tooltip_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP);
+    let enable_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
+
+    macro_rules! reset_auto_splitter_setting_ui {
+        () => {
+            obs_property_set_description(tooltip_property, DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP);
+            obs_property_set_enabled(enable_property, false);
+            return true;
+        };
+    }
+
+    if list_setting_string == default_setting_string {
+        reset_auto_splitter_setting_ui!();
+    }
+
+    let state: &mut State = &mut *data.cast();
+
+    let list_setting_string = list_setting_string.to_str().unwrap_or_default();
+
+    let user_setting = state
+        .auto_splitter_settings
+        .iter()
+        .find(|x| x.key.as_ref() == list_setting_string);
+
+    if let Some(user_setting) = user_setting {
+        match user_setting.kind {
+            UserSettingKind::Title { heading_level: _ } => {
+                obs_property_set_enabled(enable_property, false);
+            }
+            UserSettingKind::Bool { default_value: _ } => {
+                match state
+                    .global_timer
+                    .auto_splitter
+                    .get_setting_value_blocking(user_setting.key.to_string())
+                {
+                    Ok(SettingValue::Bool(value)) => {
+                        obs_property_set_enabled(enable_property, true);
+                        obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
+                    }
+                    Err(_) => {
+                        reset_auto_splitter_setting_ui!();
+                    }
+                    _ => {
+                        reset_auto_splitter_setting_ui!();
+                    }
+                }
+            }
+        }
+
+        match &user_setting.tooltip {
+            Some(tooltip) => {
+                let tooltip = CString::new(tooltip.to_string()).unwrap_or_default();
+                obs_property_set_description(tooltip_property, tooltip.as_ptr());
+            }
+            None => {
+                obs_property_set_description(tooltip_property, cstr!("No tooltip to show"));
+            }
+        }
+
+        return true;
+    } else {
+        reset_auto_splitter_setting_ui!();
+    }
+}
+
+#[cfg(feature = "auto-splitting")]
+unsafe extern "C" fn settings_enable_modified(
+    data: *mut c_void,
+    _props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
+    let list_setting_string = CStr::from_ptr(obs_data_get_string(
+        settings,
+        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
+    ));
+
+    if list_setting_string == default_setting_string {
+        return false;
+    }
+
+    let state: &mut State = &mut *data.cast();
+
+    let value = obs_data_get_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
+
+    obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
+
+    let list_setting_string = list_setting_string.to_str().unwrap_or_default();
+
+    let user_setting = state
+        .auto_splitter_settings
+        .iter()
+        .find(|x| x.key.as_ref() == list_setting_string);
+
+    if let Some(user_setting) = user_setting {
+        let set_setting_value_result = &state
+            .global_timer
+            .auto_splitter
+            .set_setting_value_blocking(user_setting.key.to_string(), SettingValue::Bool(value));
+        let reload_script_result = &state.global_timer.auto_splitter.reload_script_blocking();
+
+        match (set_setting_value_result, reload_script_result) {
+            (Ok(_), Ok(_)) => {
+                debug!("Set auto splitter setting to {value} and reloaded script");
+            }
+            (Ok(_), Err(reload_script_error)) => {
+                warn!("Set auto splitter setting to {value} but the script couldn't be reloaded: {reload_script_error}");
+            }
+            (Err(set_setting_value_error), Ok(_)) => {
+                warn!("Script was reloaded but couldn't set the auto splitter setting to {value}: {set_setting_value_error}");
+            }
+            (Err(set_setting_value_error), Err(reload_script_error)) => {
+                warn!(
+                    "Couldn't set the auto splitter setting to {value}: {set_setting_value_error}"
+                );
+                warn!("Couldn't reload script: {reload_script_error}");
+            }
+        }
+    } else {
+        warn!("Couldn't find the auto splitter setting '{list_setting_string}'");
+    }
+
+    true
 }
 
 #[cfg(feature = "auto-splitting")]
@@ -953,6 +1115,14 @@ const SETTINGS_AUTO_SPLITTER_INFO: *const c_char = cstr!("auto_splitter_info");
 const SETTINGS_AUTO_SPLITTER_ACTIVATE: *const c_char = cstr!("auto_splitter_activate");
 #[cfg(feature = "auto-splitting")]
 const SETTINGS_AUTO_SPLITTER_WEBSITE: *const c_char = cstr!("auto_splitter_website");
+#[cfg(feature = "auto-splitting")]
+const SETTINGS_AUTO_SPLITTER_SETTINGS_LIST: *const c_char = cstr!("auto_splitter_settings_list");
+#[cfg(feature = "auto-splitting")]
+const SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP: *const c_char =
+    cstr!("auto_splitter_settings_tooltip");
+#[cfg(feature = "auto-splitting")]
+const SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE: *const c_char =
+    cstr!("auto_splitter_settings_enable");
 const SETTINGS_LAYOUT_PATH: *const c_char = cstr!("layout_path");
 const SETTINGS_SAVE_SPLITS: *const c_char = cstr!("save_splits");
 
@@ -1077,6 +1247,86 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         obs_property_set_visible(website_button, !uses_local_auto_splitter);
 
         obs_property_set_visible(local_auto_splitter_path, uses_local_auto_splitter);
+
+        if !state
+            .global_timer
+            .auto_splitter_is_enabled
+            .load(atomic::Ordering::Relaxed)
+        {
+            return props;
+        }
+
+        let settings_list = obs_properties_add_list(
+            props,
+            SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
+            cstr!("Custom auto splitter settings"),
+            OBS_COMBO_TYPE_LIST,
+            OBS_COMBO_FORMAT_STRING,
+        );
+
+        obs_properties_add_text(
+            props,
+            SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP,
+            DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP,
+            OBS_TEXT_INFO,
+        );
+
+        let settings_enable = obs_properties_add_bool(
+            props,
+            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
+            cstr!("Enable"),
+        );
+
+        obs_property_list_add_string(
+            settings_list,
+            cstr!("Select a setting to change"),
+            DEFAULT_AUTO_SPLITTER_LIST_SETTING,
+        );
+
+        obs_data_set_string(
+            state.obs_settings,
+            SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
+            DEFAULT_AUTO_SPLITTER_LIST_SETTING,
+        );
+        obs_data_set_bool(
+            state.obs_settings,
+            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
+            false,
+        );
+
+        obs_property_set_modified_callback2(settings_list, Some(settings_list_modified), data);
+        obs_property_set_modified_callback2(settings_enable, Some(settings_enable_modified), data);
+
+        let auto_splitter_settings = state
+            .global_timer
+            .auto_splitter
+            .get_settings_blocking()
+            .ok();
+
+        if let Some(auto_splitter_settings) = auto_splitter_settings {
+            state.auto_splitter_settings = auto_splitter_settings;
+
+            for setting in &state.auto_splitter_settings {
+                let setting_description = CString::new(setting.description.as_ref());
+
+                let setting_key = CString::new(setting.key.as_ref());
+
+                if let (Ok(setting_key), Ok(setting_description)) =
+                    (setting_key, setting_description)
+                {
+                    obs_property_list_add_string(
+                        settings_list,
+                        setting_description.as_ptr(),
+                        setting_key.as_ptr(),
+                    );
+                } else {
+                    warn!(
+                        "Couldn't add invalid setting to the settings list ({}: {})",
+                        setting.key, setting.description
+                    );
+                }
+            }
+        }
     }
 
     props

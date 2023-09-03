@@ -248,3 +248,33 @@ pub extern "C" fn obs_module_get_config_path(
 ) -> *const c_char {
     panic!()
 }
+#[no_mangle]
+pub extern "C" fn obs_properties_add_list(
+    _props: *mut obs_properties_t,
+    _name: *const c_char,
+    _description: *const c_char,
+    _combo_type: obs_combo_type,
+    _combo_format: obs_combo_format,
+) -> *mut obs_property_t {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_property_list_add_string(
+    _prop: *mut obs_property_t,
+    _name: *const c_char,
+    _val: *const c_char,
+) -> size_t {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_set_bool(_data: *mut obs_data_t, _name: *const c_char, _val: bool) {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_set_string(
+    _data: *mut obs_data_t,
+    _name: *const c_char,
+    _val: *const c_char,
+) {
+    panic!()
+}

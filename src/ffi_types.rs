@@ -45,6 +45,19 @@ pub const OBS_TEXT_PASSWORD: obs_text_type = 1;
 pub const OBS_TEXT_MULTILINE: obs_text_type = 2;
 pub const OBS_TEXT_INFO: obs_text_type = 3;
 
+pub type obs_combo_type = u32;
+pub const OBS_COMBO_TYPE_INVALID: obs_combo_type = 0;
+pub const OBS_COMBO_TYPE_EDITABLE: obs_combo_type = 1;
+pub const OBS_COMBO_TYPE_LIST: obs_combo_type = 2;
+pub const OBS_COMBO_TYPE_RADIO: obs_combo_type = 3;
+
+pub type obs_combo_format = u32;
+pub const OBS_COMBO_FORMAT_INVALID: obs_combo_format = 0;
+pub const OBS_COMBO_FORMAT_INT: obs_combo_format = 1;
+pub const OBS_COMBO_FORMAT_FLOAT: obs_combo_format = 2;
+pub const OBS_COMBO_FORMAT_STRING: obs_combo_format = 3;
+pub const OBS_COMBO_FORMAT_BOOL: obs_combo_format = 4;
+
 pub type obs_data_t = obs_data;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
