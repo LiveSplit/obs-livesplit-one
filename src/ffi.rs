@@ -15,8 +15,17 @@ use std::{
 
 pub use crate::ffi_types::*;
 
+// Usually we want to link against OBS as a shared library (dylib), however:
+// 1. On macOS we need to link against their framework.
+// 2. On Windows a `.lib` file is actually what Windows links against, not a
+//    `.dll`. Rust added `raw-dylib` to skip the `.lib` file entirely (you
+//    neither need a `.dll` or `.lib` at link time).
 #[cfg_attr(target_os = "macos", link(name = "libobs", kind = "framework"))]
-#[cfg_attr(not(target_os = "macos"), link(name = "obs", kind = "dylib"))]
+#[cfg_attr(windows, link(name = "obs", kind = "raw-dylib"))]
+#[cfg_attr(
+    not(any(target_os = "macos", windows)),
+    link(name = "obs", kind = "dylib")
+)]
 extern "C" {
     pub fn obs_register_source_s(info: *const obs_source_info, size: size_t);
     pub fn gs_texture_create(
@@ -115,6 +124,7 @@ extern "C" {
         props: *mut obs_properties_t,
         prop: *const c_char,
     ) -> *mut obs_property_t;
+    #[cfg(feature = "auto-splitting")]
     pub fn obs_module_get_config_path(
         module: *mut obs_module_t,
         file: *const c_char,
