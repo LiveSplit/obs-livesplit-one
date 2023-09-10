@@ -15,7 +15,8 @@ use std::{
 
 pub use crate::ffi_types::*;
 
-#[link(name = "obs", kind = "dylib")]
+#[cfg_attr(target_os = "macos", link(name = "libobs", kind = "framework"))]
+#[cfg_attr(not(target_os = "macos"), link(name = "obs", kind = "dylib"))]
 extern "C" {
     pub fn obs_register_source_s(info: *const obs_source_info, size: size_t);
     pub fn gs_texture_create(
