@@ -18,11 +18,6 @@ main() {
         FEATURE_FLAGS="--no-default-features --features $FEATURES"
     fi
 
-    if [ "$OS_NAME" = "windows-latest" ]; then
-        $cargo build -p obs --target $TARGET $release_flag $FEATURE_FLAGS
-        cp target/$TARGET/$target_folder/obs.dll.lib ./obs.lib
-    fi
-
     $cargo build --target $TARGET $release_flag $FEATURE_FLAGS
 
     if [ "$OS_NAME" = "macOS-latest" ]; then

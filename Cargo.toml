@@ -13,16 +13,16 @@ members = ["obs"]
 crate-type = ["cdylib"]
 
 [dependencies]
-obs = { path = "obs" }
 livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features = [
     "software-rendering",
     "font-loading",
 ] }
 log = { version = "0.4.6", features = ["serde"] }
 
-# crates needed for the auto splitter management code to work as expected
-hyperx = { version = "1.4.0", optional = true }
+# crates needed for the auto splitter management code to work as expected`
+anyhow = { version = "1.0.75", optional = true }
 open = { version = "5.0.0", optional = true }
+percent-encoding = { version = "2.3.0", optional = true }
 quick-xml = { version = "0.30.0", features = [
     "serialize",
     "overlapped-lists",
@@ -31,17 +31,23 @@ reqwest = { version = "0.11.18", features = [
     "blocking",
     "rustls-tls-native-roots",
 ], default-features = false, optional = true }
-serde = { version = "1.0.166", features = ["derive"], optional = true }
+serde = { version = "1.0.188", optional = true }
+serde_derive = { version = "1.0.188", optional = true }
+
+[target.'cfg(not(any(target_os = "macos", windows)))'.dependencies]
+obs = { path = "obs" }
 
 [features]
 default = ["auto-splitting"]
 auto-splitting = [
     "livesplit-core/auto-splitting",
-    "dep:hyperx",
+    "dep:anyhow",
     "dep:open",
+    "dep:percent-encoding",
     "dep:quick-xml",
     "dep:reqwest",
     "dep:serde",
+    "dep:serde_derive",
 ]
 
 [profile.max-opt]

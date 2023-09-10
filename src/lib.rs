@@ -9,14 +9,9 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     ptr,
-    sync::{
-        atomic::{self, AtomicPtr},
-        Arc, Mutex, OnceLock, Weak,
-    },
+    sync::{Arc, Mutex, Weak},
 };
 
-#[cfg(feature = "auto-splitting")]
-mod auto_splitters;
 mod ffi;
 mod ffi_types;
 
@@ -27,13 +22,12 @@ use ffi::{
     gs_texture_set_image, gs_texture_t, obs_data_get_bool, obs_data_get_int, obs_data_get_string,
     obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
     obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
-    obs_leave_graphics, obs_module_get_config_path, obs_module_t, obs_mouse_event,
-    obs_properties_add_bool, obs_properties_add_button, obs_properties_add_int,
-    obs_properties_add_path, obs_properties_create, obs_property_set_modified_callback2,
-    obs_property_t, obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA,
-    LOG_WARNING, OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
-    OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
-    OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
+    obs_leave_graphics, obs_mouse_event, obs_properties_add_bool, obs_properties_add_button,
+    obs_properties_add_int, obs_properties_add_path, obs_properties_create,
+    obs_property_set_modified_callback2, obs_property_t, obs_register_source_s, obs_source_info,
+    obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING, OBS_EFFECT_PREMULTIPLIED_ALPHA,
+    OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE, OBS_SOURCE_CONTROLLABLE_MEDIA,
+    OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION, OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
 use ffi_types::{
     obs_media_state, obs_properties_t, LOG_DEBUG, LOG_ERROR, LOG_INFO, OBS_MEDIA_STATE_ENDED,
@@ -53,65 +47,23 @@ use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
 
 #[cfg(feature = "auto-splitting")]
 use {
-    self::{
-        auto_splitters::{GetListFromFileError, GetListFromGithubError},
-        ffi::{
-            obs_properties_add_text, obs_properties_get, obs_property_set_description,
-            obs_property_set_enabled, obs_property_set_visible, OBS_TEXT_INFO,
-        },
+    self::ffi::{
+        obs_properties_add_text, obs_properties_get, obs_property_set_description,
+        obs_property_set_enabled, obs_property_set_visible, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting,
     log::error,
-    std::sync::atomic::AtomicBool,
+    std::sync::atomic::{self, AtomicBool},
 };
 
 macro_rules! cstr {
     ($f:literal) => {
-        concat!($f, '\0').as_ptr().cast::<c_char>()
+        concat!($f, '\0').as_ptr().cast::<std::os::raw::c_char>()
     };
 }
 
-static OBS_MODULE_POINTER: AtomicPtr<obs_module_t> = AtomicPtr::new(ptr::null_mut());
-
-fn get_module_config_path() -> &'static PathBuf {
-    static OBS_MODULE_CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-    OBS_MODULE_CONFIG_PATH.get_or_init(|| {
-        let mut buffer = PathBuf::new();
-
-        unsafe {
-            let config_path_ptr = obs_module_get_config_path(
-                OBS_MODULE_POINTER.load(atomic::Ordering::Relaxed),
-                cstr!(""),
-            );
-            if let Ok(config_path) = CStr::from_ptr(config_path_ptr).to_str() {
-                buffer.push(config_path);
-            }
-        }
-
-        buffer
-    })
-}
-
 #[cfg(feature = "auto-splitting")]
-fn get_auto_splitter_list_manager() -> &'static auto_splitters::ListManager {
-    static AUTO_SPLITTER_LIST_MANAGER: OnceLock<auto_splitters::ListManager> = OnceLock::new();
-
-    AUTO_SPLITTER_LIST_MANAGER
-        .get_or_init(|| auto_splitters::ListManager::new(get_module_config_path()))
-}
-
-#[cfg(feature = "auto-splitting")]
-fn get_auto_splitters_path() -> &'static PathBuf {
-    static AUTO_SPLITTERS_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-    AUTO_SPLITTERS_PATH.get_or_init(|| get_module_config_path().join("Components"))
-}
-
-#[no_mangle]
-pub extern "C" fn obs_module_set_pointer(module: *mut obs_module_t) {
-    OBS_MODULE_POINTER.store(module, atomic::Ordering::Relaxed);
-}
+mod auto_splitters;
 
 #[no_mangle]
 pub extern "C" fn obs_module_ver() -> u32 {
@@ -763,10 +715,10 @@ unsafe fn update_auto_splitter_ui(
     activate_button: *mut obs_property_t,
     game_name: &str,
 ) {
-    if let Some(auto_splitter) = get_auto_splitter_list_manager().get_for_game(game_name) {
+    if let Some(auto_splitter) = auto_splitters::get_list().get_for_game(game_name) {
         obs_property_set_enabled(website_button, auto_splitter.website.is_some());
 
-        if !auto_splitters::ListManager::is_using_auto_splitting_runtime(auto_splitter) {
+        if !auto_splitter.is_using_auto_splitting_runtime() {
             obs_property_set_enabled(activate_button, false);
             obs_property_set_description(
                 info_text,
@@ -836,9 +788,10 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
         .auto_splitter_is_enabled
         .load(atomic::Ordering::Relaxed)
     {
-        if let Some(auto_splitter_path) = get_auto_splitter_list_manager().download_for_game(
+        if let Some(auto_splitter_path) = auto_splitters::get_downloader().download_for_game(
+            auto_splitters::get_list(),
             state.global_timer.timer.read().unwrap().run().game_name(),
-            get_auto_splitters_path(),
+            auto_splitters::get_path(),
         ) {
             auto_splitter_load(&state.global_timer, auto_splitter_path);
         } else {
@@ -879,7 +832,7 @@ unsafe extern "C" fn auto_splitter_open_website(
 ) -> bool {
     let state: &mut State = &mut *data.cast();
 
-    let website = get_auto_splitter_list_manager()
+    let website = auto_splitters::get_list()
         .get_website_for_game(state.global_timer.timer.read().unwrap().run().game_name());
 
     match website {
@@ -1314,68 +1267,8 @@ pub extern "C" fn obs_module_load() -> bool {
         obs_register_source_s(source_info, mem::size_of_val(source_info) as _);
     }
 
-    let module_config_path = get_module_config_path();
-    if module_config_path.exists() {
-        info!("Module config directory already exists.");
-    } else {
-        match fs::create_dir_all(module_config_path) {
-            Ok(_) => {
-                info!("Created module config directory.");
-            }
-            Err(e) => {
-                info!("Couldn't create / access the module config directory: {e}");
-            }
-        }
-    }
-
     #[cfg(feature = "auto-splitting")]
-    {
-        let auto_splitters_path = get_auto_splitters_path();
-
-        if auto_splitters_path.exists() {
-            info!("Auto splitter files directory already exists.");
-        } else {
-            match fs::create_dir_all(auto_splitters_path) {
-                Ok(_) => {
-                    info!("Created auto splitter files config directory.");
-                }
-                Err(e) => {
-                    error!("Couldn't create / access the auto splitter files directory: {e}");
-                }
-            }
-        }
-
-        let auto_splitter_list_manager = get_auto_splitter_list_manager();
-        match auto_splitter_list_manager.get_result() {
-            Ok(_) => {
-                if auto_splitter_list_manager.save_list_to_disk(auto_splitters_path) {
-                    info!("Auto splitter list loaded.");
-                } else {
-                    error!("Auto splitter list loaded but it couldn't be written to disk.");
-                }
-            }
-            Err(e) => {
-                let from_github_error_string = match &e.0 {
-                    GetListFromGithubError::NetError(e) => e.to_string(),
-                    GetListFromGithubError::DeserializationError(e) => e.to_string(),
-                };
-
-                let from_file_error_string = match &e.1 {
-                    GetListFromFileError::IoError(e) => e.to_string(),
-                    GetListFromFileError::DeserializationError(e) => e.to_string(),
-                };
-
-                error!(
-                    "Something went wrong when downloading the list of auto splitters: {}",
-                    from_github_error_string
-                );
-                error!(
-                    "Something went wrong when loading the list of auto splitters from disk: {}",
-                    from_file_error_string
-                );
-            }
-        }
-    }
+    auto_splitters::set_up();
 
     true
 }
