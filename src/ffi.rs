@@ -75,6 +75,20 @@ extern "C" {
         description: *const c_char,
         text_type: obs_text_type,
     ) -> *mut obs_property_t;
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_properties_add_list(
+        props: *mut obs_properties_t,
+        name: *const c_char,
+        description: *const c_char,
+        combo_type: obs_combo_type,
+        combo_format: obs_combo_format,
+    ) -> *mut obs_property_t;
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_property_list_add_string(
+        prop: *mut obs_property_t,
+        name: *const c_char,
+        val: *const c_char,
+    ) -> size_t;
     pub fn obs_properties_add_int(
         props: *mut obs_properties_t,
         name: *const c_char,
@@ -129,4 +143,8 @@ extern "C" {
         module: *mut obs_module_t,
         file: *const c_char,
     ) -> *const c_char;
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_data_set_bool(data: *mut obs_data_t, name: *const c_char, val: bool);
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_data_set_string(data: *mut obs_data_t, name: *const c_char, val: *const c_char);
 }
