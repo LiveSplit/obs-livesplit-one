@@ -8,18 +8,16 @@ use std::{
     ffi::CStr,
     fs,
     path::{Path, PathBuf},
-    ptr, str,
+    str,
     sync::{
-        atomic::{self, AtomicPtr},
+        atomic::{self},
         OnceLock,
     },
 };
 
-use crate::{ffi::obs_module_get_config_path, ffi_types::obs_module_t};
+use crate::ffi::obs_module_get_config_path;
 
 const LIST_FILE_NAME: &str = "LiveSplit.AutoSplitters.xml";
-
-static OBS_MODULE_POINTER: AtomicPtr<obs_module_t> = AtomicPtr::new(ptr::null_mut());
 
 pub fn get_module_config_path() -> &'static PathBuf {
     static OBS_MODULE_CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -29,7 +27,7 @@ pub fn get_module_config_path() -> &'static PathBuf {
 
         unsafe {
             let config_path_ptr = obs_module_get_config_path(
-                OBS_MODULE_POINTER.load(atomic::Ordering::Relaxed),
+                crate::OBS_MODULE_POINTER.load(atomic::Ordering::Relaxed),
                 cstr!(""),
             );
             if let Ok(config_path) = CStr::from_ptr(config_path_ptr).to_str() {
@@ -39,11 +37,6 @@ pub fn get_module_config_path() -> &'static PathBuf {
 
         buffer
     })
-}
-
-#[no_mangle]
-pub extern "C" fn obs_module_set_pointer(module: *mut obs_module_t) {
-    OBS_MODULE_POINTER.store(module, atomic::Ordering::Relaxed);
 }
 
 pub static LIST: OnceLock<List> = OnceLock::new();

@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     ptr,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{self, AtomicPtr},
+        Arc, Mutex, Weak,
+    },
 };
 
 mod ffi;
@@ -22,12 +25,13 @@ use ffi::{
     gs_texture_set_image, gs_texture_t, obs_data_get_bool, obs_data_get_int, obs_data_get_string,
     obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
     obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
-    obs_leave_graphics, obs_mouse_event, obs_properties_add_bool, obs_properties_add_button,
-    obs_properties_add_int, obs_properties_add_path, obs_properties_create,
-    obs_property_set_modified_callback2, obs_property_t, obs_register_source_s, obs_source_info,
-    obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING, OBS_EFFECT_PREMULTIPLIED_ALPHA,
-    OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE, OBS_SOURCE_CONTROLLABLE_MEDIA,
-    OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION, OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
+    obs_leave_graphics, obs_module_t, obs_mouse_event, obs_properties_add_bool,
+    obs_properties_add_button, obs_properties_add_int, obs_properties_add_path,
+    obs_properties_create, obs_property_set_modified_callback2, obs_property_t,
+    obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
+    OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
+    OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
+    OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
 use ffi_types::{
     obs_media_state, obs_properties_t, LOG_DEBUG, LOG_ERROR, LOG_INFO, OBS_MEDIA_STATE_ENDED,
@@ -56,10 +60,7 @@ use {
     livesplit_core::auto_splitting,
     livesplit_core::auto_splitting::{SettingValue, UserSetting, UserSettingKind},
     log::error,
-    std::{
-        ffi::CString,
-        sync::atomic::{self, AtomicBool},
-    },
+    std::{ffi::CString, sync::atomic::AtomicBool},
 };
 
 macro_rules! cstr {
@@ -70,6 +71,15 @@ macro_rules! cstr {
 
 #[cfg(feature = "auto-splitting")]
 mod auto_splitters;
+
+static OBS_MODULE_POINTER: AtomicPtr<obs_module_t> = AtomicPtr::new(ptr::null_mut());
+
+// This function is required for the OBS module registration to happen
+// It is essentially like calling OBS_DECLARE_MODULE() in C
+#[no_mangle]
+pub extern "C" fn obs_module_set_pointer(module: *mut obs_module_t) {
+    OBS_MODULE_POINTER.store(module, atomic::Ordering::Relaxed);
+}
 
 #[no_mangle]
 pub extern "C" fn obs_module_ver() -> u32 {
