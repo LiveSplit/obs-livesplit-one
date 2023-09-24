@@ -68,7 +68,6 @@ extern "C" {
         description: *const c_char,
     ) -> *mut obs_property_t;
     pub fn obs_data_get_bool(data: *mut obs_data_t, name: *const c_char) -> bool;
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_properties_add_text(
         props: *mut obs_properties_t,
         name: *const c_char,
@@ -82,6 +81,14 @@ extern "C" {
         description: *const c_char,
         combo_type: obs_combo_type,
         combo_format: obs_combo_format,
+    ) -> *mut obs_property_t;
+    pub fn obs_properties_add_editable_list(
+        props: *mut obs_properties_t,
+        name: *const c_char,
+        description: *const c_char,
+        list_type: obs_editable_list_type,
+        filter: *const c_char,
+        default_path: *const c_char,
     ) -> *mut obs_property_t;
     #[cfg(feature = "auto-splitting")]
     pub fn obs_property_list_add_string(
@@ -131,9 +138,7 @@ extern "C" {
     pub fn obs_property_set_description(prop: *mut obs_property_t, description: *const c_char);
     #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_enabled(prop: *mut obs_property_t, enabled: bool);
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_visible(prop: *mut obs_property_t, visible: bool);
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_properties_get(
         props: *mut obs_properties_t,
         prop: *const c_char,
@@ -147,4 +152,11 @@ extern "C" {
     pub fn obs_data_set_bool(data: *mut obs_data_t, name: *const c_char, val: bool);
     #[cfg(feature = "auto-splitting")]
     pub fn obs_data_set_string(data: *mut obs_data_t, name: *const c_char, val: *const c_char);
+
+    pub fn obs_data_get_array(data: *mut obs_data_t, name: *const c_char) -> *mut c_void;
+    pub fn obs_data_array_count(array: *mut c_void) -> size_t;
+    pub fn obs_data_array_item(array: *mut c_void, idx: size_t) -> *mut obs_data_t;
+    pub fn obs_data_array_release(array: *mut c_void);
+    pub fn obs_data_release(data: *mut obs_data_t);
+    pub fn obs_data_get_json(data: *mut obs_data_t) -> *const c_char;
 }

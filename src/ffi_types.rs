@@ -58,6 +58,11 @@ pub const OBS_COMBO_FORMAT_FLOAT: obs_combo_format = 2;
 pub const OBS_COMBO_FORMAT_STRING: obs_combo_format = 3;
 pub const OBS_COMBO_FORMAT_BOOL: obs_combo_format = 4;
 
+pub type obs_editable_list_type = u32;
+pub const OBS_EDITABLE_LIST_TYPE_STRINGS: obs_editable_list_type = 0;
+pub const OBS_EDITABLE_LIST_TYPE_FILES: obs_editable_list_type = 1;
+pub const OBS_EDITABLE_LIST_TYPE_FILES_AND_URLS: obs_editable_list_type = 2;
+
 pub type obs_data_t = obs_data;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -104,6 +109,7 @@ pub struct obs_mouse_event {
 
 pub type obs_path_type = u32;
 pub const OBS_PATH_FILE: obs_path_type = 0;
+pub const OBS_PATH_DIRECTORY: obs_path_type = 2;
 
 pub type obs_properties_t = obs_properties;
 #[repr(C)]

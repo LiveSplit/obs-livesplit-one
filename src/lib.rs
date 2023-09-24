@@ -22,20 +22,24 @@ use ffi::{
     blog, gs_draw_sprite, gs_effect_get_param_by_name, gs_effect_get_technique,
     gs_effect_set_texture, gs_effect_t, gs_technique_begin, gs_technique_begin_pass,
     gs_technique_end, gs_technique_end_pass, gs_texture_create, gs_texture_destroy,
-    gs_texture_set_image, gs_texture_t, obs_data_get_bool, obs_data_get_int, obs_data_get_string,
-    obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
-    obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
-    obs_leave_graphics, obs_module_t, obs_mouse_event, obs_properties_add_bool,
-    obs_properties_add_button, obs_properties_add_int, obs_properties_add_path,
-    obs_properties_create, obs_property_set_modified_callback2, obs_property_t,
-    obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
+    gs_texture_set_image, gs_texture_t, obs_data_array_count, obs_data_array_item,
+    obs_data_array_release, obs_data_get_array, obs_data_get_bool, obs_data_get_int,
+    obs_data_get_json, obs_data_get_string, obs_data_release, obs_data_set_default_bool,
+    obs_data_set_default_int, obs_data_t, obs_enter_graphics, obs_get_base_effect, obs_hotkey_id,
+    obs_hotkey_register_source, obs_hotkey_t, obs_leave_graphics, obs_mouse_event,
+    obs_properties_add_bool, obs_properties_add_button, obs_properties_add_editable_list,
+    obs_properties_add_int, obs_properties_add_path, obs_properties_add_text,
+    obs_properties_create, obs_properties_get, obs_property_set_modified_callback2,
+    obs_property_set_visible, obs_property_t, obs_register_source_s, obs_source_info, obs_source_t,
+    GS_DYNAMIC, GS_RGBA, LOG_WARNING, OBS_EDITABLE_LIST_TYPE_STRINGS,
     OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
     OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
     OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
 use ffi_types::{
-    obs_media_state, obs_properties_t, LOG_DEBUG, LOG_ERROR, LOG_INFO, OBS_MEDIA_STATE_ENDED,
-    OBS_MEDIA_STATE_PAUSED, OBS_MEDIA_STATE_PLAYING, OBS_MEDIA_STATE_STOPPED,
+    obs_media_state, obs_module_t, obs_properties_t, LOG_DEBUG, LOG_ERROR, LOG_INFO,
+    OBS_MEDIA_STATE_ENDED, OBS_MEDIA_STATE_PAUSED, OBS_MEDIA_STATE_PLAYING,
+    OBS_MEDIA_STATE_STOPPED, OBS_PATH_DIRECTORY, OBS_TEXT_DEFAULT,
 };
 
 use livesplit_core::{
@@ -48,14 +52,15 @@ use livesplit_core::{
     Layout, Run, Segment, SharedTimer, Timer, TimerPhase,
 };
 use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
+use serde_derive::Deserialize;
+use serde_json::from_str;
 
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
-        obs_data_set_bool, obs_data_set_string, obs_properties_add_list, obs_properties_add_text,
-        obs_properties_get, obs_property_list_add_string, obs_property_set_description,
-        obs_property_set_enabled, obs_property_set_visible, OBS_COMBO_FORMAT_STRING,
-        OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
+        obs_data_set_bool, obs_data_set_string, obs_properties_add_list,
+        obs_property_list_add_string, obs_property_set_description, obs_property_set_enabled,
+        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting,
     livesplit_core::auto_splitting::{SettingValue, UserSetting, UserSettingKind},
@@ -106,6 +111,10 @@ static TIMERS: Mutex<Vec<Weak<GlobalTimer>>> = Mutex::new(Vec::new());
 struct State {
     #[cfg(feature = "auto-splitting")]
     local_auto_splitter: Option<PathBuf>,
+    use_game_arguments: bool,
+    game_arguments: String,
+    game_working_directory: Option<PathBuf>,
+    game_environment_vars: Vec<(String, String)>,
     game_path: PathBuf,
     global_timer: Arc<GlobalTimer>,
     auto_save: bool,
@@ -125,12 +134,25 @@ struct State {
 struct Settings {
     #[cfg(feature = "auto-splitting")]
     local_auto_splitter: Option<PathBuf>,
+    use_game_arguments: bool,
+    game_arguments: String,
+    game_working_directory: Option<PathBuf>,
+    game_environment_vars: Vec<(String, String)>,
     game_path: PathBuf,
     splits_path: PathBuf,
     auto_save: bool,
     layout: Layout,
     width: u32,
     height: u32,
+}
+
+#[derive(Deserialize)]
+struct ObsEditableListEntry {
+    value: String,
+    #[serde(rename = "selected")]
+    _selected: bool,
+    #[serde(rename = "hidden")]
+    _hidden: bool,
 }
 
 fn parse_run(path: &Path) -> Option<(Run, bool)> {
@@ -179,6 +201,43 @@ fn save_splits_file(state: &State) -> bool {
     false
 }
 
+unsafe fn get_game_environment_vars(settings: *mut obs_data_t) -> Vec<(String, String)> {
+    let environment_list = obs_data_get_array(settings, SETTINGS_GAME_ENVIRONMENT_LIST);
+    let count = obs_data_array_count(environment_list);
+
+    let mut vars = Vec::<(String, String)>::new();
+
+    for i in 0..count {
+        let item = obs_data_array_item(environment_list, i);
+        'use_item: {
+            let raw_json = obs_data_get_json(item);
+            let raw_json = CStr::from_ptr(raw_json.cast()).to_string_lossy();
+            let entry = match from_str::<ObsEditableListEntry>(raw_json.as_ref()) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    warn!("Couldn't read item {i} contents: {e}");
+                    break 'use_item;
+                }
+            };
+
+            let (key, value) = match entry.value.split_once('=') {
+                Some((key, value)) => (key, value),
+                None => {
+                    warn!("Invalid environment variable entry: '{}'", entry.value);
+                    break 'use_item;
+                }
+            };
+
+            vars.push((key.to_string(), value.to_string()));
+        }
+
+        obs_data_release(item);
+    }
+    obs_data_array_release(environment_list);
+
+    vars
+}
+
 unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     #[cfg(feature = "auto-splitting")]
     let local_auto_splitter = {
@@ -195,6 +254,18 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
             None
         }
     };
+
+    let use_game_arguments = obs_data_get_bool(settings, SETTINGS_USE_GAME_ARGUMENTS);
+    let game_arguments =
+        CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_ARGUMENTS).cast())
+            .to_string_lossy()
+            .to_string();
+    let game_working_directory =
+        CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_WORKING_DIRECTORY).cast())
+            .to_string_lossy();
+    let game_working_directory = (!game_working_directory.is_empty())
+        .then_some(PathBuf::from(game_working_directory.into_owned()));
+    let game_environment_vars = get_game_environment_vars(settings);
 
     let game_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_GAME_PATH).cast());
     let game_path = PathBuf::from(game_path.to_string_lossy().into_owned());
@@ -213,6 +284,10 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
     Settings {
         #[cfg(feature = "auto-splitting")]
         local_auto_splitter,
+        use_game_arguments,
+        game_arguments,
+        game_working_directory,
+        game_environment_vars,
         game_path,
         splits_path,
         auto_save,
@@ -227,6 +302,10 @@ impl State {
         Settings {
             #[cfg(feature = "auto-splitting")]
             local_auto_splitter,
+            use_game_arguments,
+            game_arguments,
+            game_working_directory,
+            game_environment_vars,
             game_path,
             splits_path,
             auto_save,
@@ -255,6 +334,10 @@ impl State {
         Self {
             #[cfg(feature = "auto-splitting")]
             local_auto_splitter,
+            use_game_arguments,
+            game_arguments,
+            game_working_directory,
+            game_environment_vars,
             game_path,
             global_timer,
             auto_save,
@@ -619,6 +702,32 @@ unsafe extern "C" fn save_splits(
     save_splits_file(state)
 }
 
+unsafe extern "C" fn use_game_arguments_modified(
+    data: *mut c_void,
+    props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let state: &mut State = &mut *data.cast();
+
+    let use_game_arguments = obs_data_get_bool(settings, SETTINGS_USE_GAME_ARGUMENTS);
+
+    // No UI change needed
+    if state.use_game_arguments == use_game_arguments {
+        return false;
+    }
+
+    let game_arguments = obs_properties_get(props, SETTINGS_GAME_ARGUMENTS);
+    let game_working_directory = obs_properties_get(props, SETTINGS_GAME_WORKING_DIRECTORY);
+    let game_env_list = obs_properties_get(props, SETTINGS_GAME_ENVIRONMENT_LIST);
+
+    obs_property_set_visible(game_arguments, use_game_arguments);
+    obs_property_set_visible(game_working_directory, use_game_arguments);
+    obs_property_set_visible(game_env_list, use_game_arguments);
+
+    true
+}
+
 unsafe extern "C" fn start_game_clicked(
     _props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
@@ -626,41 +735,78 @@ unsafe extern "C" fn start_game_clicked(
 ) -> bool {
     let state: &mut State = &mut *data.cast();
 
-    if state.game_path.exists() {
-        info!("Starting game...");
-
-        let mut process = Command::new(state.game_path.clone());
-
-        let _child = process.spawn();
-
-        #[cfg(unix)]
-        {
-            // For Unix systems only, spawn a new thread that waits for the process to exit.
-            // This avoids keeping the process in a zombie state and never letting go of it until
-            // the plugin is unloaded
-
-            let mut child = match _child {
-                Ok(child) => child,
-                Err(e) => {
-                    warn!("Failure starting the game process {e}");
-                    return false;
-                }
-            };
-
-            std::thread::spawn(move || match child.wait() {
-                Ok(exit_status) => {
-                    info!("Game process exited with {}", exit_status);
-                }
-                Err(e) => {
-                    warn!("Failure waiting for the game process' exit: {e}");
-                }
-            });
-        }
-
+    if !state.game_path.exists() {
+        warn!("No path provided to start a game.");
         return false;
     }
+    let mut command = Command::new(state.game_path.clone());
 
-    warn!("No path provided to start a game.");
+    if state.use_game_arguments {
+        // Is the game arguments string empty / whitespace only?
+        if !state.game_arguments.trim().is_empty() {
+            debug!("Parsing game arguments");
+
+            #[cfg(windows)]
+            std::os::windows::process::CommandExt::raw_arg(&mut command, &state.game_arguments);
+
+            #[cfg(not(windows))]
+            {
+                let game_arguments = match shlex::split(state.game_arguments.as_str()) {
+                    Some(arguments) => arguments,
+                    None => {
+                        warn!("Could not parse the game command arguments");
+                        return false;
+                    }
+                };
+
+                if !game_arguments.is_empty() {
+                    command.args(game_arguments);
+                }
+            }
+        }
+
+        for (key, var) in &state.game_environment_vars {
+            command.env(key, var);
+        }
+
+        if let Some(game_working_directory) = &state.game_working_directory {
+            if game_working_directory.exists() {
+                command.current_dir(game_working_directory);
+            } else {
+                warn!("Provided working directory was not found, using the default one.");
+            }
+        } else {
+            info!("No working directory provided, using the default one.");
+        }
+    }
+
+    info!("Starting game...");
+
+    let _child = command.spawn();
+
+    #[cfg(unix)]
+    {
+        // For Unix systems only, spawn a new thread that waits for the process to exit.
+        // This avoids keeping the process in a zombie state and never letting go of it until
+        // the plugin is unloaded
+
+        let mut child = match _child {
+            Ok(child) => child,
+            Err(e) => {
+                warn!("Failure starting the game process {e}");
+                return false;
+            }
+        };
+
+        std::thread::spawn(move || match child.wait() {
+            Ok(exit_status) => {
+                info!("Game process exited with {}", exit_status);
+            }
+            Err(e) => {
+                warn!("Failure waiting for the game process' exit: {e}");
+            }
+        });
+    }
 
     false
 }
@@ -742,7 +888,7 @@ unsafe extern "C" fn settings_list_modified(
             }
         }
 
-        return true;
+        true
     } else {
         reset_auto_splitter_setting_ui!();
     }
@@ -1111,7 +1257,11 @@ unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
 
 const SETTINGS_WIDTH: *const c_char = cstr!("width");
 const SETTINGS_HEIGHT: *const c_char = cstr!("height");
+const SETTINGS_USE_GAME_ARGUMENTS: *const c_char = cstr!("game_use_arguments");
 const SETTINGS_GAME_PATH: *const c_char = cstr!("game_path");
+const SETTINGS_GAME_ARGUMENTS: *const c_char = cstr!("game_arguments");
+const SETTINGS_GAME_WORKING_DIRECTORY: *const c_char = cstr!("game_working_directory");
+const SETTINGS_GAME_ENVIRONMENT_LIST: *const c_char = cstr!("game_environment_list");
 const SETTINGS_START_GAME: *const c_char = cstr!("start_game");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
 const SETTINGS_AUTO_SAVE: *const c_char = cstr!("auto_save");
@@ -1172,6 +1322,18 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         ptr::null(),
     );
 
+    let use_game_arguments = obs_properties_add_bool(
+        props,
+        SETTINGS_USE_GAME_ARGUMENTS,
+        cstr!("Advanced start game options"),
+    );
+
+    obs_property_set_modified_callback2(
+        use_game_arguments,
+        Some(use_game_arguments_modified),
+        data,
+    );
+
     obs_properties_add_path(
         props,
         SETTINGS_GAME_PATH,
@@ -1180,6 +1342,36 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         cstr!("Executable files (*)"),
         ptr::null(),
     );
+    let game_arguments = obs_properties_add_text(
+        props,
+        SETTINGS_GAME_ARGUMENTS,
+        cstr!("Game arguments"),
+        OBS_TEXT_DEFAULT,
+    );
+    let game_working_directory = obs_properties_add_path(
+        props,
+        SETTINGS_GAME_WORKING_DIRECTORY,
+        cstr!("Working directory"),
+        OBS_PATH_DIRECTORY,
+        cstr!("Directories"),
+        ptr::null(),
+    );
+    let game_env_list = obs_properties_add_editable_list(
+        props,
+        SETTINGS_GAME_ENVIRONMENT_LIST,
+        cstr!("Game environment variables (KEY=VALUE)"),
+        OBS_EDITABLE_LIST_TYPE_STRINGS,
+        ptr::null(),
+        ptr::null(),
+    );
+
+    let state: &mut State = &mut *data.cast();
+
+    let uses_game_arguments = state.use_game_arguments;
+    obs_property_set_visible(game_arguments, uses_game_arguments);
+    obs_property_set_visible(game_working_directory, uses_game_arguments);
+    obs_property_set_visible(game_env_list, uses_game_arguments);
+
     obs_properties_add_button(
         props,
         SETTINGS_START_GAME,
@@ -1191,8 +1383,6 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
 
     #[cfg(feature = "auto-splitting")]
     {
-        let state: &mut State = &mut *data.cast();
-
         let use_local_auto_splitter = obs_properties_add_bool(
             props,
             SETTINGS_LOCAL_AUTO_SPLITTER,
@@ -1372,7 +1562,14 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
     handle_splits_path_change(state, settings.splits_path);
 
+    state.use_game_arguments = settings.use_game_arguments;
+
+    state.game_arguments = settings.game_arguments;
+    state.game_working_directory = settings.game_working_directory;
+    state.game_environment_vars = settings.game_environment_vars;
+
     state.game_path = settings.game_path;
+
     state.auto_save = settings.auto_save;
     state.layout = settings.layout;
 
