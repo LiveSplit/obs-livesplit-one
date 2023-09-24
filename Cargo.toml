@@ -18,6 +18,9 @@ livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features
     "font-loading",
 ] }
 log = { version = "0.4.6", features = ["serde"] }
+serde = "1.0.188"
+serde_derive = "1.0.188"
+serde_json = "1.0.105"
 
 # crates needed for the auto splitter management code to work as expected`
 anyhow = { version = "1.0.75", optional = true }
@@ -31,11 +34,12 @@ reqwest = { version = "0.11.18", features = [
     "blocking",
     "rustls-tls-native-roots",
 ], default-features = false, optional = true }
-serde = { version = "1.0.188", optional = true }
-serde_derive = { version = "1.0.188", optional = true }
 
 [target.'cfg(not(any(target_os = "macos", windows)))'.dependencies]
 obs = { path = "obs" }
+
+[target.'cfg(not(windows))'.dependencies]
+shlex = "1.1.0"
 
 [features]
 default = ["auto-splitting"]
@@ -46,8 +50,6 @@ auto-splitting = [
     "dep:percent-encoding",
     "dep:quick-xml",
     "dep:reqwest",
-    "dep:serde",
-    "dep:serde_derive",
 ]
 
 [profile.max-opt]
@@ -55,6 +57,7 @@ inherits = "release"
 lto = true
 panic = "abort"
 codegen-units = 1
+strip = true
 
 [profile.max-opt.build-override]
 opt-level = 0

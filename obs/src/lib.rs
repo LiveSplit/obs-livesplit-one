@@ -259,6 +259,17 @@ pub extern "C" fn obs_properties_add_list(
     panic!()
 }
 #[no_mangle]
+pub extern "C" fn obs_properties_add_editable_list(
+    _props: *mut obs_properties_t,
+    _name: *const c_char,
+    _description: *const c_char,
+    _list_type: obs_editable_list_type,
+    _filter: *const c_char,
+    _default_path: *const c_char,
+) -> *mut obs_property_t {
+    panic!()
+}
+#[no_mangle]
 pub extern "C" fn obs_property_list_add_string(
     _prop: *mut obs_property_t,
     _name: *const c_char,
@@ -276,5 +287,29 @@ pub extern "C" fn obs_data_set_string(
     _name: *const c_char,
     _val: *const c_char,
 ) {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_get_array(_data: *mut obs_data_t, _name: *const c_char) -> *mut c_void {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_array_count(_array: *mut c_void) -> size_t {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_array_item(_array: *mut c_void, _idx: size_t) -> *mut obs_data_t {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_array_release(_array: *mut c_void) {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_release(_data: *mut obs_data_t) {
+    panic!()
+}
+#[no_mangle]
+pub extern "C" fn obs_data_get_json(_data: *mut obs_data_t) -> *const c_char {
     panic!()
 }
