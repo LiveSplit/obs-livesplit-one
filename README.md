@@ -17,6 +17,10 @@ Download the latest release for your operating system from the
 - `mkdir -p $HOME/.config/obs-studio/plugins`
 - Untar, e.g.: `tar -zxvf obs-livesplit-one-*-x86_64-unknown-linux-gnu.tar.gz -C $HOME/.config/obs-studio/plugins/`
 
+#### Flatpak
+
+- When using OBS from Flathub, this plugin can be installed with the command `flatpak install flathub com.obsproject.Studio.Plugin.OBSLivesplitOne`
+
 ### macOS
 
 - Right click your `OBS` -> Options -> Show in Finder
