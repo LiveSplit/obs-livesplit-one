@@ -917,39 +917,18 @@ unsafe extern "C" fn settings_enable_modified(
 
     obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
 
-    let list_setting_string = list_setting_string.to_str().unwrap_or_default();
+    let set_setting_value_result = state.global_timer.auto_splitter.set_setting_value_blocking(
+        list_setting_string.to_str().unwrap_or_default().into(),
+        SettingValue::Bool(value),
+    );
 
-    let user_setting = state
-        .auto_splitter_settings
-        .iter()
-        .find(|x| x.key.as_ref() == list_setting_string);
-
-    if let Some(user_setting) = user_setting {
-        let set_setting_value_result = &state
-            .global_timer
-            .auto_splitter
-            .set_setting_value_blocking(user_setting.key.to_string(), SettingValue::Bool(value));
-        let reload_script_result = &state.global_timer.auto_splitter.reload_script_blocking();
-
-        match (set_setting_value_result, reload_script_result) {
-            (Ok(_), Ok(_)) => {
-                debug!("Set auto splitter setting to {value} and reloaded script");
-            }
-            (Ok(_), Err(reload_script_error)) => {
-                warn!("Set auto splitter setting to {value} but the script couldn't be reloaded: {reload_script_error}");
-            }
-            (Err(set_setting_value_error), Ok(_)) => {
-                warn!("Script was reloaded but couldn't set the auto splitter setting to {value}: {set_setting_value_error}");
-            }
-            (Err(set_setting_value_error), Err(reload_script_error)) => {
-                warn!(
-                    "Couldn't set the auto splitter setting to {value}: {set_setting_value_error}"
-                );
-                warn!("Couldn't reload script: {reload_script_error}");
-            }
+    match set_setting_value_result {
+        Ok(_) => {
+            debug!("Set auto splitter setting to {value}.");
         }
-    } else {
-        warn!("Couldn't find the auto splitter setting '{list_setting_string}'");
+        Err(set_setting_value_error) => {
+            warn!("Couldn't set the auto splitter setting to {value}: {set_setting_value_error}");
+        }
     }
 
     true
