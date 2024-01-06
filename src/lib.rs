@@ -63,7 +63,7 @@ use {
         OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting,
-    livesplit_core::auto_splitting::{SettingValue, UserSetting, UserSettingKind},
+    livesplit_core::auto_splitting::settings::{Value, Widget, WidgetKind},
     log::error,
     std::{ffi::CString, sync::atomic::AtomicBool},
 };
@@ -126,7 +126,7 @@ struct State {
     height: u32,
     activated: bool,
     #[cfg(feature = "auto-splitting")]
-    auto_splitter_settings: Vec<UserSetting>,
+    auto_splitter_settings: Arc<Vec<Widget>>,
     #[cfg(feature = "auto-splitting")]
     obs_settings: *mut obs_data_t,
 }
@@ -349,7 +349,7 @@ impl State {
             height,
             activated: false,
             #[cfg(feature = "auto-splitting")]
-            auto_splitter_settings: Vec::<UserSetting>::default(),
+            auto_splitter_settings: Arc::<Vec<Widget>>::default(),
             #[cfg(feature = "auto-splitting")]
             obs_settings,
         }
@@ -855,26 +855,41 @@ unsafe extern "C" fn settings_list_modified(
 
     if let Some(user_setting) = user_setting {
         match user_setting.kind {
-            UserSettingKind::Title { heading_level: _ } => {
+            WidgetKind::Title { heading_level: _ } => {
                 obs_property_set_enabled(enable_property, false);
             }
-            UserSettingKind::Bool { default_value: _ } => {
+            WidgetKind::Bool {
+                default_value: default,
+            } => {
                 match state
                     .global_timer
                     .auto_splitter
-                    .get_setting_value_blocking(user_setting.key.to_string())
+                    .settings_map()
+                    .unwrap_or_default()
+                    .get(user_setting.key.as_ref())
                 {
-                    Ok(SettingValue::Bool(value)) => {
+                    Some(Value::Bool(value)) => {
                         obs_property_set_enabled(enable_property, true);
-                        obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
+                        obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, *value);
                     }
-                    Err(_) => {
-                        reset_auto_splitter_setting_ui!();
+                    Some(_) => {
+                        warn!("Unknown / unimplemented value type");
                     }
-                    _ => {
-                        reset_auto_splitter_setting_ui!();
+                    None => {
+                        obs_property_set_enabled(enable_property, true);
+                        obs_data_set_bool(
+                            settings,
+                            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
+                            default,
+                        );
                     }
                 }
+            }
+            WidgetKind::Choice { .. } => {
+                warn!("Unimplemented setting type Choice");
+            }
+            WidgetKind::FileSelect { .. } => {
+                warn!("Unimplemented setting type FileSelect");
             }
         }
 
@@ -917,19 +932,24 @@ unsafe extern "C" fn settings_enable_modified(
 
     obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
 
-    let set_setting_value_result = state.global_timer.auto_splitter.set_setting_value_blocking(
-        list_setting_string.to_str().unwrap_or_default().into(),
-        SettingValue::Bool(value),
-    );
+    let setting_key = match list_setting_string.to_str() {
+        Ok(value) => value,
+        Err(_) => {
+            warn!("Tried to set invalid setting key");
+            return false;
+        }
+    };
 
-    match set_setting_value_result {
-        Ok(_) => {
-            debug!("Set auto splitter setting to {value}.");
+    match state.global_timer.auto_splitter.settings_map() {
+        Some(mut map) => {
+            map.insert(Arc::from(setting_key), Value::Bool(value));
+            state.global_timer.auto_splitter.set_settings_map(map);
         }
-        Err(set_setting_value_error) => {
-            warn!("Couldn't set the auto splitter setting to {value}: {set_setting_value_error}");
+        None => {
+            warn!("The settings map could not be loaded");
+            return false;
         }
-    }
+    };
 
     true
 }
@@ -1044,7 +1064,7 @@ unsafe fn update_auto_splitter_ui(
 
 #[cfg(feature = "auto-splitting")]
 fn auto_splitter_unload(global_timer: &GlobalTimer) {
-    global_timer.auto_splitter.unload_script_blocking().ok();
+    global_timer.auto_splitter.unload().ok();
 
     global_timer
         .auto_splitter_is_enabled
@@ -1053,7 +1073,10 @@ fn auto_splitter_unload(global_timer: &GlobalTimer) {
 
 #[cfg(feature = "auto-splitting")]
 fn auto_splitter_load(global_timer: &GlobalTimer, path: PathBuf) {
-    let enabled = if let Err(e) = global_timer.auto_splitter.load_script_blocking(path) {
+    let enabled = if let Err(e) = global_timer
+        .auto_splitter
+        .load(path, global_timer.timer.clone())
+    {
         warn!("Auto Splitter could not be loaded: {e}");
         false
     } else {
@@ -1476,16 +1499,12 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         obs_property_set_modified_callback2(settings_list, Some(settings_list_modified), data);
         obs_property_set_modified_callback2(settings_enable, Some(settings_enable_modified), data);
 
-        let auto_splitter_settings = state
-            .global_timer
-            .auto_splitter
-            .get_settings_blocking()
-            .ok();
+        let auto_splitter_settings = state.global_timer.auto_splitter.settings_widgets();
 
         if let Some(auto_splitter_settings) = auto_splitter_settings {
             state.auto_splitter_settings = auto_splitter_settings;
 
-            for setting in &state.auto_splitter_settings {
+            for setting in state.auto_splitter_settings.iter() {
                 let setting_description = CString::new(setting.description.as_ref());
 
                 let setting_key = CString::new(setting.key.as_ref());
@@ -1606,7 +1625,7 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
         let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
         let timer = Timer::new(run).unwrap().into_shared();
         #[cfg(feature = "auto-splitting")]
-        let auto_splitter = auto_splitting::Runtime::new(timer.clone());
+        let auto_splitter = auto_splitting::Runtime::new();
         let global_timer = Arc::new(GlobalTimer {
             path: splits_path,
             can_save_splits,
