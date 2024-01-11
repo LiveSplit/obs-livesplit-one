@@ -839,6 +839,8 @@ unsafe extern "C" fn settings_list_modified(
             obs_property_set_description(tooltip_property, DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP);
             obs_property_set_enabled(enable_property, false);
             obs_property_set_enabled(file_select_property, false);
+            obs_property_set_visible(enable_property, false);
+            obs_property_set_visible(file_select_property, false);
             return true;
         };
     }
@@ -861,6 +863,8 @@ unsafe extern "C" fn settings_list_modified(
             WidgetKind::Title { heading_level: _ } => {
                 obs_property_set_enabled(enable_property, false);
                 obs_property_set_enabled(file_select_property, false);
+                obs_property_set_visible(enable_property, false);
+                obs_property_set_visible(file_select_property, false);
             }
             WidgetKind::Bool {
                 default_value: default,
@@ -875,6 +879,8 @@ unsafe extern "C" fn settings_list_modified(
                     Some(Value::Bool(value)) => {
                         obs_property_set_enabled(enable_property, true);
                         obs_property_set_enabled(file_select_property, false);
+                        obs_property_set_visible(enable_property, true);
+                        obs_property_set_visible(file_select_property, false);
                         obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, *value);
                     }
                     Some(_) => {
@@ -883,6 +889,8 @@ unsafe extern "C" fn settings_list_modified(
                     None => {
                         obs_property_set_enabled(enable_property, true);
                         obs_property_set_enabled(file_select_property, false);
+                        obs_property_set_visible(enable_property, true);
+                        obs_property_set_visible(file_select_property, false);
                         obs_data_set_bool(
                             settings,
                             SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
@@ -905,6 +913,8 @@ unsafe extern "C" fn settings_list_modified(
                     Some(Value::String(value)) => {
                         obs_property_set_enabled(enable_property, false);
                         obs_property_set_enabled(file_select_property, true);
+                        obs_property_set_visible(enable_property, false);
+                        obs_property_set_visible(file_select_property, true);
                         let path_cs = wasi_path::to_native(value).filter(|p| p.exists()).and_then(|p| {
                             CString::new(p.as_os_str().as_encoded_bytes()).ok()
                         }).unwrap_or_default();
@@ -916,6 +926,8 @@ unsafe extern "C" fn settings_list_modified(
                     None => {
                         obs_property_set_enabled(enable_property, false);
                         obs_property_set_enabled(file_select_property, true);
+                        obs_property_set_visible(enable_property, false);
+                        obs_property_set_visible(file_select_property, true);
                         obs_data_set_string(
                             settings,
                             SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT,
