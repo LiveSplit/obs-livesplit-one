@@ -64,6 +64,7 @@ use {
     },
     livesplit_core::auto_splitting,
     livesplit_core::auto_splitting::settings::{Value, Widget, WidgetKind},
+    livesplit_core::auto_splitting::wasi_path,
     log::error,
     std::{ffi::CString, sync::atomic::AtomicBool},
 };
@@ -904,8 +905,10 @@ unsafe extern "C" fn settings_list_modified(
                     Some(Value::String(value)) => {
                         obs_property_set_enabled(enable_property, false);
                         obs_property_set_enabled(file_select_property, true);
-                        let value_cs = CString::new(&**value).unwrap_or_default();
-                        obs_data_set_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT, value_cs.as_ptr());
+                        let path_cs = wasi_path::to_native(value).filter(|p| p.exists()).and_then(|p| {
+                            CString::new(p.as_os_str().as_encoded_bytes()).ok()
+                        }).unwrap_or_default();
+                        obs_data_set_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT, path_cs.as_ptr());
                     }
                     Some(_) => {
                         warn!("Unknown / unimplemented value type");
@@ -1018,7 +1021,11 @@ unsafe extern "C" fn settings_file_select_modified(
     match state.global_timer.auto_splitter.settings_map() {
         Some(mut map) => {
             let value_str = CStr::from_ptr(value).to_string_lossy();
-            map.insert(Arc::from(setting_key), Value::String(Arc::from(value_str)));
+            let Some(wasi_str) = wasi_path::from_native(Path::new(value_str.as_ref())) else {
+                warn!("Tried to set invalid setting value");
+                return false;
+            };
+            map.insert(Arc::from(setting_key), Value::String(Arc::from(wasi_str)));
             state.global_timer.auto_splitter.set_settings_map(map);
         }
         None => {
