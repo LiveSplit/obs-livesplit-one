@@ -883,10 +883,7 @@ unsafe extern "C" fn settings_list_modified(
                         obs_property_set_visible(file_select_property, false);
                         obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, *value);
                     }
-                    Some(_) => {
-                        warn!("Unknown / unimplemented value type");
-                    }
-                    None => {
+                    _ => {
                         obs_property_set_enabled(enable_property, true);
                         obs_property_set_enabled(file_select_property, false);
                         obs_property_set_visible(enable_property, true);
@@ -920,10 +917,7 @@ unsafe extern "C" fn settings_list_modified(
                         }).unwrap_or_default();
                         obs_data_set_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT, path_cs.as_ptr());
                     }
-                    Some(_) => {
-                        warn!("Unknown / unimplemented value type");
-                    }
-                    None => {
+                    _ => {
                         obs_property_set_enabled(enable_property, false);
                         obs_property_set_enabled(file_select_property, true);
                         obs_property_set_visible(enable_property, false);
