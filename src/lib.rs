@@ -975,8 +975,6 @@ unsafe extern "C" fn settings_enable_modified(
 
     let value = obs_data_get_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
 
-    obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, value);
-
     let setting_key = match list_setting_string.to_str() {
         Ok(value) => value,
         Err(_) => {
@@ -1019,8 +1017,6 @@ unsafe extern "C" fn settings_file_select_modified(
     let state: &mut State = &mut *data.cast();
 
     let value = obs_data_get_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
-
-    obs_data_set_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT, value);
 
     let setting_key = match list_setting_string.to_str() {
         Ok(value) => value,
