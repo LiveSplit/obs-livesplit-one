@@ -99,17 +99,14 @@ jobs:
           - label: macOS aarch64
             target: aarch64-apple-darwin
             rust_flags: -L framework=/Applications/OBS.app/Contents/Frameworks
-            os: macOS-latest
-            arm: yes
+            os: macos-14
             features: auto-splitting
             cross: skip
-            install_target: true
 
           - label: macOS x86_64
             target: x86_64-apple-darwin
             rust_flags: -L framework=/Applications/OBS.app/Contents/Frameworks
-            os: macOS-latest
-            arm: no
+            os: macos-13
             features: auto-splitting
             cross: skip
 
@@ -117,17 +114,16 @@ jobs:
             target: x86_64-apple-darwin
             target_rename: x86_64_v3-apple-darwin
             rust_flags: -C target-cpu=x86-64-v3 -L framework=/Applications/OBS.app/Contents/Frameworks
-            os: macOS-latest
-            arm: no
+            os: macos-13
             features: auto-splitting
             cross: skip
 
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: hecrj/setup-rust-action@v1
+        uses: hecrj/setup-rust-action@v2
         with:
           rust-version: ${{ matrix.toolchain || 'stable' }}
 
@@ -135,12 +131,8 @@ jobs:
         if: matrix.install_target != ''
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install arm64 OBS
-        if: matrix.os == 'macOS-latest' && matrix.arm == 'yes'
-        run: curl https://cdn-fastly.obsproject.com/downloads/obs-studio-29.1.3-macos-arm64.dmg -o obs.dmg && hdiutil attach obs.dmg && sudo cp -R /Volumes/obs-studio-29.1.3-macos-arm64/OBS.app /Applications && hdiutil unmount /Volumes/obs-studio-29.1.3-macos-arm64
-
-      - name: Install x64 OBS
-        if: matrix.os == 'macOS-latest' && matrix.arm == 'no'
+      - name: Install OBS (macOS)
+        if: startsWith(matrix.os, 'macos-')
         run: brew install --cask obs
 
       - name: Download cross
@@ -190,10 +182,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: hecrj/setup-rust-action@v1
+        uses: hecrj/setup-rust-action@v2
         with:
           components: clippy
 
@@ -204,10 +196,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: hecrj/setup-rust-action@v1
+        uses: hecrj/setup-rust-action@v2
         with:
           components: rustfmt
 

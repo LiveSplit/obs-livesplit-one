@@ -5,7 +5,7 @@ main() {
     local src=$(pwd) \
           stage=
 
-    if [ "$OS_NAME" = "macOS-latest" ]; then
+    if [[ "$OS_NAME" =~ ^macos\-.*$ ]]; then
         stage=$(mktemp -d -t tmp)
     else
         stage=$(mktemp -d)
@@ -14,7 +14,7 @@ main() {
     if [ "$OS_NAME" = "ubuntu-latest" ]; then
         mkdir -p $stage/obs-livesplit-one/bin/$PLUGIN_BITS
         cp target/$TARGET/max-opt/libobs_livesplit_one.so $stage/obs-livesplit-one/bin/$PLUGIN_BITS/libobs-livesplit-one.so
-    elif [ "$OS_NAME" = "macOS-latest" ]; then
+    elif [[ "$OS_NAME" =~ ^macos\-.*$ ]]; then
         mkdir -p $stage/obs-livesplit-one.plugin/Contents/MacOS
         mkdir -p $stage/obs-livesplit-one.plugin/Contents/Resources
         cp target/$TARGET/max-opt/libobs_livesplit_one.dylib $stage/obs-livesplit-one.plugin/Contents/MacOS/obs-livesplit-one.so

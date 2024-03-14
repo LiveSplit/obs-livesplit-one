@@ -20,7 +20,7 @@ main() {
 
     $cargo build --target $TARGET $release_flag $FEATURE_FLAGS
 
-    if [ "$OS_NAME" = "macOS-latest" ]; then
+    if [[ "$OS_NAME" =~ ^macos\-.*$ ]]; then
         install_name_tool -change $(pwd)/target/$TARGET/$target_folder/deps/libobs.dylib @rpath/libobs.0.dylib target/$TARGET/$target_folder/libobs_livesplit_one.dylib
     fi
 }
