@@ -49,6 +49,7 @@ use livesplit_core::{
         parser::{composite, TimerKind},
         saver::livesplit::{save_timer, IoWrite},
     },
+    settings::ImageCache,
     Layout, Run, Segment, SharedTimer, Timer, TimerPhase,
 };
 use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
@@ -121,6 +122,7 @@ struct State {
     auto_save: bool,
     layout: Layout,
     state: LayoutState,
+    image_cache: ImageCache,
     renderer: Renderer,
     texture: *mut gs_texture_t,
     width: u32,
@@ -344,6 +346,7 @@ impl State {
             auto_save,
             layout,
             state,
+            image_cache: ImageCache::new(),
             renderer,
             texture,
             width,
@@ -359,16 +362,21 @@ impl State {
     unsafe fn render(&mut self) {
         self.layout.update_state(
             &mut self.state,
+            &mut self.image_cache,
             &self.global_timer.timer.read().unwrap().snapshot(),
         );
 
-        self.renderer.render(&self.state, [self.width, self.height]);
+        self.renderer
+            .render(&self.state, &self.image_cache, [self.width, self.height]);
+
         gs_texture_set_image(
             self.texture,
             self.renderer.image_data().as_ptr(),
             self.width * 4,
             false,
         );
+
+        self.image_cache.collect();
     }
 }
 
@@ -832,7 +840,8 @@ unsafe extern "C" fn settings_list_modified(
 
     let tooltip_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP);
     let enable_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
-    let file_select_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
+    let file_select_property =
+        obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
 
     macro_rules! reset_auto_splitter_setting_ui {
         () => {
@@ -900,7 +909,13 @@ unsafe extern "C" fn settings_list_modified(
                 warn!("Unimplemented setting type Choice");
             }
             WidgetKind::FileSelect { .. } => {
-                match state
+                obs_property_set_enabled(enable_property, false);
+                obs_property_set_enabled(file_select_property, true);
+                obs_property_set_visible(enable_property, false);
+                obs_property_set_visible(file_select_property, true);
+                // Needs to outlive the pointer.
+                let path_cs;
+                let path_ptr = match state
                     .global_timer
                     .auto_splitter
                     .settings_map()
@@ -908,27 +923,20 @@ unsafe extern "C" fn settings_list_modified(
                     .get(user_setting.key.as_ref())
                 {
                     Some(Value::String(value)) => {
-                        obs_property_set_enabled(enable_property, false);
-                        obs_property_set_enabled(file_select_property, true);
-                        obs_property_set_visible(enable_property, false);
-                        obs_property_set_visible(file_select_property, true);
-                        let path_cs = wasi_path::to_native(value).filter(|p| p.exists()).and_then(|p| {
-                            CString::new(p.as_os_str().as_encoded_bytes()).ok()
-                        }).unwrap_or_default();
-                        obs_data_set_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT, path_cs.as_ptr());
+                        path_cs = wasi_path::to_native(value, true)
+                            .filter(|p| p.exists())
+                            .and_then(|p| CString::new(p.as_os_str().as_encoded_bytes()).ok())
+                            .unwrap_or_default();
+
+                        path_cs.as_ptr()
                     }
-                    _ => {
-                        obs_property_set_enabled(enable_property, false);
-                        obs_property_set_enabled(file_select_property, true);
-                        obs_property_set_visible(enable_property, false);
-                        obs_property_set_visible(file_select_property, true);
-                        obs_data_set_string(
-                            settings,
-                            SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT,
-                            ptr::null(),
-                        );
-                    }
-                }
+                    _ => ptr::null(),
+                };
+                obs_data_set_string(
+                    settings,
+                    SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT,
+                    path_ptr,
+                );
             }
         }
 
@@ -1594,7 +1602,11 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
 
         obs_property_set_modified_callback2(settings_list, Some(settings_list_modified), data);
         obs_property_set_modified_callback2(settings_enable, Some(settings_enable_modified), data);
-        obs_property_set_modified_callback2(settings_file_select, Some(settings_file_select_modified), data);
+        obs_property_set_modified_callback2(
+            settings_file_select,
+            Some(settings_file_select_modified),
+            data,
+        );
 
         let auto_splitter_settings = state.global_timer.auto_splitter.settings_widgets();
 
