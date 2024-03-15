@@ -60,14 +60,19 @@ use serde_json::from_str;
 use {
     self::ffi::{
         obs_data_set_bool, obs_data_set_string, obs_properties_add_list,
-        obs_property_list_add_string, obs_property_set_description, obs_property_set_enabled,
-        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
+        obs_property_list_add_string, obs_property_name, obs_property_set_description,
+        obs_property_set_enabled, OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting,
-    livesplit_core::auto_splitting::settings::{Value, Widget, WidgetKind},
+    livesplit_core::auto_splitting::settings::{ChoiceOption, Value, Widget, WidgetKind},
     livesplit_core::auto_splitting::wasi_path,
     log::error,
-    std::{ffi::CString, sync::atomic::AtomicBool},
+    std::{
+        collections::{hash_map::DefaultHasher, HashMap, HashSet},
+        ffi::CString,
+        hash::{Hash, Hasher},
+        sync::atomic::AtomicBool,
+    },
 };
 
 macro_rules! cstr {
@@ -130,6 +135,8 @@ struct State {
     activated: bool,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_settings: Arc<Vec<Widget>>,
+    #[cfg(feature = "auto-splitting")]
+    settings_choices: HashSet<Arc<Vec<ChoiceOption>>>,
     #[cfg(feature = "auto-splitting")]
     obs_settings: *mut obs_data_t,
 }
@@ -354,6 +361,8 @@ impl State {
             activated: false,
             #[cfg(feature = "auto-splitting")]
             auto_splitter_settings: Arc::<Vec<Widget>>::default(),
+            #[cfg(feature = "auto-splitting")]
+            settings_choices: HashSet::new(),
             #[cfg(feature = "auto-splitting")]
             obs_settings,
         }
@@ -838,10 +847,18 @@ unsafe extern "C" fn settings_list_modified(
         SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
     ));
 
+    let state: &mut State = &mut *data.cast();
+
     let tooltip_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP);
     let enable_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
     let file_select_property =
         obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
+    let mut choice_properties = HashMap::new();
+    for options in state.settings_choices.iter() {
+        let name = auto_splitter_settings_choice(options);
+        let choice_property = obs_properties_get(props, name.as_ptr());
+        choice_properties.insert(options.clone(), choice_property);
+    }
 
     macro_rules! reset_auto_splitter_setting_ui {
         () => {
@@ -850,6 +867,10 @@ unsafe extern "C" fn settings_list_modified(
             obs_property_set_enabled(file_select_property, false);
             obs_property_set_visible(enable_property, false);
             obs_property_set_visible(file_select_property, false);
+            for &choice_property in choice_properties.values() {
+                obs_property_set_enabled(choice_property, false);
+                obs_property_set_visible(choice_property, false);
+            }
             return true;
         };
     }
@@ -857,8 +878,6 @@ unsafe extern "C" fn settings_list_modified(
     if list_setting_string == default_setting_string {
         reset_auto_splitter_setting_ui!();
     }
-
-    let state: &mut State = &mut *data.cast();
 
     let list_setting_string = list_setting_string.to_str().unwrap_or_default();
 
@@ -874,6 +893,10 @@ unsafe extern "C" fn settings_list_modified(
                 obs_property_set_enabled(file_select_property, false);
                 obs_property_set_visible(enable_property, false);
                 obs_property_set_visible(file_select_property, false);
+                for &choice_property in choice_properties.values() {
+                    obs_property_set_enabled(choice_property, false);
+                    obs_property_set_visible(choice_property, false);
+                }
             }
             WidgetKind::Bool {
                 default_value: default,
@@ -890,6 +913,10 @@ unsafe extern "C" fn settings_list_modified(
                         obs_property_set_enabled(file_select_property, false);
                         obs_property_set_visible(enable_property, true);
                         obs_property_set_visible(file_select_property, false);
+                        for &choice_property in choice_properties.values() {
+                            obs_property_set_enabled(choice_property, false);
+                            obs_property_set_visible(choice_property, false);
+                        }
                         obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, *value);
                     }
                     _ => {
@@ -897,6 +924,10 @@ unsafe extern "C" fn settings_list_modified(
                         obs_property_set_enabled(file_select_property, false);
                         obs_property_set_visible(enable_property, true);
                         obs_property_set_visible(file_select_property, false);
+                        for &choice_property in choice_properties.values() {
+                            obs_property_set_enabled(choice_property, false);
+                            obs_property_set_visible(choice_property, false);
+                        }
                         obs_data_set_bool(
                             settings,
                             SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
@@ -905,14 +936,43 @@ unsafe extern "C" fn settings_list_modified(
                     }
                 }
             }
-            WidgetKind::Choice { .. } => {
-                warn!("Unimplemented setting type Choice");
+            WidgetKind::Choice { ref options, .. } => {
+                obs_property_set_enabled(enable_property, false);
+                obs_property_set_enabled(file_select_property, false);
+                obs_property_set_visible(enable_property, false);
+                obs_property_set_visible(file_select_property, false);
+                for (k, &choice_property) in choice_properties.iter() {
+                    let b = k == options;
+                    obs_property_set_enabled(choice_property, b);
+                    obs_property_set_visible(choice_property, b);
+                }
+                // Needs to outlive the pointer.
+                let val_cs: CString;
+                let val_ptr = match state
+                    .global_timer
+                    .auto_splitter
+                    .settings_map()
+                    .unwrap_or_default()
+                    .get(user_setting.key.as_ref())
+                {
+                    Some(Value::String(value)) => {
+                        val_cs = CString::new(value.as_ref()).unwrap_or_default();
+                        val_cs.as_ptr()
+                    }
+                    _ => ptr::null(),
+                };
+                let name = auto_splitter_settings_choice(options);
+                obs_data_set_string(settings, name.as_ptr(), val_ptr);
             }
             WidgetKind::FileSelect { .. } => {
                 obs_property_set_enabled(enable_property, false);
                 obs_property_set_enabled(file_select_property, true);
                 obs_property_set_visible(enable_property, false);
                 obs_property_set_visible(file_select_property, true);
+                for &choice_property in choice_properties.values() {
+                    obs_property_set_enabled(choice_property, false);
+                    obs_property_set_visible(choice_property, false);
+                }
                 // Needs to outlive the pointer.
                 let path_cs;
                 let path_ptr = match state
@@ -1036,6 +1096,55 @@ unsafe extern "C" fn settings_file_select_modified(
                 return false;
             };
             map.insert(Arc::from(setting_key), Value::String(Arc::from(wasi_str)));
+            state.global_timer.auto_splitter.set_settings_map(map);
+        }
+        None => {
+            warn!("The settings map could not be loaded");
+            return false;
+        }
+    };
+    true
+}
+
+#[cfg(feature = "auto-splitting")]
+unsafe extern "C" fn settings_choice_modified(
+    data: *mut c_void,
+    _props: *mut obs_properties_t,
+    prop: *mut obs_property_t,
+    settings: *mut obs_data_t,
+) -> bool {
+    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
+    let list_setting_string = CStr::from_ptr(obs_data_get_string(
+        settings,
+        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
+    ));
+
+    if list_setting_string == default_setting_string {
+        return false;
+    }
+
+    let state: &mut State = &mut *data.cast();
+
+    let value = CStr::from_ptr(obs_data_get_string(settings, obs_property_name(prop)));
+
+    if value == default_setting_string {
+        return false;
+    }
+
+    let setting_key = match list_setting_string.to_str() {
+        Ok(value) => value,
+        Err(_) => {
+            warn!("Tried to set invalid setting key");
+            return false;
+        }
+    };
+
+    match state.global_timer.auto_splitter.settings_map() {
+        Some(mut map) => {
+            map.insert(
+                Arc::from(setting_key),
+                Value::String(Arc::from(value.to_string_lossy())),
+            );
             state.global_timer.auto_splitter.set_settings_map(map);
         }
         None => {
@@ -1610,6 +1719,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
 
         let auto_splitter_settings = state.global_timer.auto_splitter.settings_widgets();
 
+        let mut choice_options_lists: HashSet<Arc<Vec<ChoiceOption>>> = HashSet::new();
         if let Some(auto_splitter_settings) = auto_splitter_settings {
             state.auto_splitter_settings = auto_splitter_settings;
 
@@ -1632,8 +1742,55 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
                         setting.key, setting.description
                     );
                 }
+
+                if let WidgetKind::Choice { options, .. } = &setting.kind {
+                    if choice_options_lists.insert(options.clone()) {
+                        let name = auto_splitter_settings_choice(options);
+                        let settings_choice = obs_properties_add_list(
+                            props,
+                            name.as_ptr(),
+                            cstr!("Choose an option"),
+                            OBS_COMBO_TYPE_LIST,
+                            OBS_COMBO_FORMAT_STRING,
+                        );
+
+                        obs_data_set_string(
+                            state.obs_settings,
+                            name.as_ptr(),
+                            DEFAULT_AUTO_SPLITTER_LIST_SETTING,
+                        );
+
+                        obs_property_set_modified_callback2(
+                            settings_choice,
+                            Some(settings_choice_modified),
+                            data,
+                        );
+
+                        for option in options.iter() {
+                            let option_description = CString::new(option.description.as_ref());
+
+                            let option_key = CString::new(option.key.as_ref());
+
+                            if let (Ok(option_key), Ok(option_description)) =
+                                (option_key, option_description)
+                            {
+                                obs_property_list_add_string(
+                                    settings_choice,
+                                    option_description.as_ptr(),
+                                    option_key.as_ptr(),
+                                );
+                            } else {
+                                warn!(
+                                    "Couldn't add invalid option to the choice ({}: {})",
+                                    option.key, option.description
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
+        state.settings_choices = choice_options_lists;
     }
 
     props
@@ -1835,4 +1992,17 @@ pub extern "C" fn obs_module_load() -> bool {
     auto_splitters::set_up();
 
     true
+}
+
+#[cfg(feature = "auto-splitting")]
+fn auto_splitter_settings_choice(options: &Arc<Vec<ChoiceOption>>) -> CString {
+    let s = format!("auto_splitter_settings_choice{}", calculate_hash(&options));
+    CString::new(s).unwrap_or_default()
+}
+
+#[cfg(feature = "auto-splitting")]
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
 }

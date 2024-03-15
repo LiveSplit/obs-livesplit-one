@@ -135,6 +135,8 @@ extern "C" {
         private: *mut c_void,
     );
     #[cfg(feature = "auto-splitting")]
+    pub fn obs_property_name(prop: *mut obs_property_t) -> *const c_char;
+    #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_description(prop: *mut obs_property_t, description: *const c_char);
     #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_enabled(prop: *mut obs_property_t, enabled: bool);
