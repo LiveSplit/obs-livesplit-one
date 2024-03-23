@@ -59,20 +59,24 @@ use serde_json::from_str;
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
-        obs_data_set_bool, obs_data_set_string, obs_properties_add_list,
-        obs_property_list_add_string, obs_property_set_description, obs_property_set_enabled,
-        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
+        obs_data_erase, obs_data_set_bool, obs_data_set_default_string, obs_data_set_string,
+        obs_properties_add_group, obs_properties_add_list, obs_property_list_add_string,
+        obs_property_set_description, obs_property_set_enabled, obs_property_set_long_description,
+        obs_source_update_properties, OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST,
+        OBS_GROUP_NORMAL, OBS_TEXT_INFO,
     },
-    livesplit_core::auto_splitting,
-    livesplit_core::auto_splitting::settings::{Value, Widget, WidgetKind},
-    livesplit_core::auto_splitting::wasi_path,
+    livesplit_core::auto_splitting::{
+        self,
+        settings::{self, FileFilter, Value, Widget, WidgetKind},
+        wasi_path,
+    },
     log::error,
     std::{ffi::CString, sync::atomic::AtomicBool},
 };
 
 macro_rules! cstr {
     ($f:literal) => {
-        concat!($f, '\0').as_ptr().cast::<std::os::raw::c_char>()
+        std::ffi::CStr::as_ptr($f)
     };
 }
 
@@ -129,9 +133,23 @@ struct State {
     height: u32,
     activated: bool,
     #[cfg(feature = "auto-splitting")]
-    auto_splitter_settings: Arc<Vec<Widget>>,
+    auto_splitter_widgets: Arc<Vec<Widget>>,
+    #[cfg(feature = "auto-splitting")]
+    auto_splitter_map: settings::Map,
     #[cfg(feature = "auto-splitting")]
     obs_settings: *mut obs_data_t,
+    #[cfg(feature = "auto-splitting")]
+    source: *mut obs_source_t,
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        unsafe {
+            obs_enter_graphics();
+            gs_texture_destroy(self.texture);
+            obs_leave_graphics();
+        }
+    }
 }
 
 struct Settings {
@@ -176,7 +194,7 @@ fn log(level: Level, target: &str, args: &fmt::Arguments<'_>) {
         Level::Debug | Level::Trace => LOG_DEBUG,
     };
     unsafe {
-        blog(level as _, cstr!("%s"), str.as_ptr());
+        blog(level as _, cstr!(c"%s"), str.as_ptr());
     }
 }
 
@@ -316,6 +334,7 @@ impl State {
             width,
             height,
         }: Settings,
+        _source: *mut obs_source_t,
         #[cfg(feature = "auto-splitting")] obs_settings: *mut obs_data_t,
     ) -> Self {
         debug!("Loading settings.");
@@ -353,9 +372,13 @@ impl State {
             height,
             activated: false,
             #[cfg(feature = "auto-splitting")]
-            auto_splitter_settings: Arc::<Vec<Widget>>::default(),
+            auto_splitter_widgets: Arc::default(),
+            #[cfg(feature = "auto-splitting")]
+            auto_splitter_map: settings::Map::new(),
             #[cfg(feature = "auto-splitting")]
             obs_settings,
+            #[cfg(feature = "auto-splitting")]
+            source: _source,
         }
     }
 
@@ -377,11 +400,35 @@ impl State {
         );
 
         self.image_cache.collect();
+
+        #[cfg(feature = "auto-splitting")]
+        {
+            let mut needs_properties_update = false;
+
+            if let Some(auto_splitter_widgets) = self.global_timer.auto_splitter.settings_widgets()
+            {
+                if !Arc::ptr_eq(&self.auto_splitter_widgets, &auto_splitter_widgets) {
+                    self.auto_splitter_widgets = auto_splitter_widgets;
+                    needs_properties_update = true;
+                }
+            }
+
+            if let Some(auto_splitter_map) = self.global_timer.auto_splitter.settings_map() {
+                if !self.auto_splitter_map.is_unchanged(&auto_splitter_map) {
+                    self.auto_splitter_map = auto_splitter_map;
+                    needs_properties_update = true;
+                }
+            }
+
+            if needs_properties_update {
+                obs_source_update_properties(self.source);
+            }
+        }
     }
 }
 
 unsafe extern "C" fn get_name(_: *mut c_void) -> *const c_char {
-    cstr!("LiveSplit One")
+    cstr!(c"LiveSplit One")
 }
 
 unsafe extern "C" fn split(
@@ -394,7 +441,7 @@ unsafe extern "C" fn split(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -412,7 +459,7 @@ unsafe extern "C" fn reset(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -434,7 +481,7 @@ unsafe extern "C" fn undo(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -452,7 +499,7 @@ unsafe extern "C" fn skip(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -470,7 +517,7 @@ unsafe extern "C" fn pause(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -493,7 +540,7 @@ unsafe extern "C" fn undo_all_pauses(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -511,7 +558,7 @@ unsafe extern "C" fn previous_comparison(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -534,7 +581,7 @@ unsafe extern "C" fn next_comparison(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -557,7 +604,7 @@ unsafe extern "C" fn toggle_timing_method(
         return;
     }
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if !state.activated {
         return;
     }
@@ -571,79 +618,82 @@ unsafe extern "C" fn toggle_timing_method(
 }
 
 unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
-    #[cfg(feature = "auto-splitting")]
-    let data = Box::into_raw(Box::new(State::new(parse_settings(settings), settings))).cast();
-    #[cfg(not(feature = "auto-splitting"))]
-    let data = Box::into_raw(Box::new(State::new(parse_settings(settings)))).cast();
+    let data = Box::into_raw(Box::new(Mutex::new(State::new(
+        parse_settings(settings),
+        source,
+        #[cfg(feature = "auto-splitting")]
+        settings,
+    ))))
+    .cast();
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_split"),
-        cstr!("Split"),
+        cstr!(c"hotkey_split"),
+        cstr!(c"Split"),
         Some(split),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_reset"),
-        cstr!("Reset"),
+        cstr!(c"hotkey_reset"),
+        cstr!(c"Reset"),
         Some(reset),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_undo"),
-        cstr!("Undo Split"),
+        cstr!(c"hotkey_undo"),
+        cstr!(c"Undo Split"),
         Some(undo),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_skip"),
-        cstr!("Skip Split"),
+        cstr!(c"hotkey_skip"),
+        cstr!(c"Skip Split"),
         Some(skip),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_pause"),
-        cstr!("Pause"),
+        cstr!(c"hotkey_pause"),
+        cstr!(c"Pause"),
         Some(pause),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_undo_all_pauses"),
-        cstr!("Undo All Pauses"),
+        cstr!(c"hotkey_undo_all_pauses"),
+        cstr!(c"Undo All Pauses"),
         Some(undo_all_pauses),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_previous_comparison"),
-        cstr!("Previous Comparison"),
+        cstr!(c"hotkey_previous_comparison"),
+        cstr!(c"Previous Comparison"),
         Some(previous_comparison),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_next_comparison"),
-        cstr!("Next Comparison"),
+        cstr!(c"hotkey_next_comparison"),
+        cstr!(c"Next Comparison"),
         Some(next_comparison),
         data,
     );
 
     obs_hotkey_register_source(
         source,
-        cstr!("hotkey_toggle_timing_method"),
-        cstr!("Toggle Timing Method"),
+        cstr!(c"hotkey_toggle_timing_method"),
+        cstr!(c"Toggle Timing Method"),
         Some(toggle_timing_method),
         data,
     );
@@ -652,34 +702,31 @@ unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t
 }
 
 unsafe extern "C" fn destroy(data: *mut c_void) {
-    let state: Box<State> = Box::from_raw(data.cast());
-    obs_enter_graphics();
-    gs_texture_destroy(state.texture);
-    obs_leave_graphics();
+    drop(Box::<Mutex<State>>::from_raw(data.cast()));
 }
 
 unsafe extern "C" fn get_width(data: *mut c_void) -> u32 {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.width
 }
 
 unsafe extern "C" fn get_height(data: *mut c_void) -> u32 {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.height
 }
 
 unsafe extern "C" fn video_render(data: *mut c_void, _: *mut gs_effect_t) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.render();
 
     let effect = obs_get_base_effect(OBS_EFFECT_PREMULTIPLIED_ALPHA);
-    let tech = gs_effect_get_technique(effect, cstr!("Draw"));
+    let tech = gs_effect_get_technique(effect, cstr!(c"Draw"));
 
     gs_technique_begin(tech);
     gs_technique_begin_pass(tech, 0);
 
     gs_effect_set_texture(
-        gs_effect_get_param_by_name(effect, cstr!("image")),
+        gs_effect_get_param_by_name(effect, cstr!(c"image")),
         state.texture,
     );
     gs_draw_sprite(state.texture, 0, 0, 0);
@@ -694,7 +741,7 @@ unsafe extern "C" fn mouse_wheel(
     _: c_int,
     y_delta: c_int,
 ) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     match y_delta.cmp(&0) {
         Ordering::Less => state.layout.scroll_down(),
         Ordering::Equal => {}
@@ -707,7 +754,7 @@ unsafe extern "C" fn save_splits(
     _: *mut obs_property_t,
     data: *mut c_void,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     save_splits_file(state)
 }
 
@@ -717,7 +764,7 @@ unsafe extern "C" fn use_game_arguments_modified(
     _prop: *mut obs_property_t,
     settings: *mut obs_data_t,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let use_game_arguments = obs_data_get_bool(settings, SETTINGS_USE_GAME_ARGUMENTS);
 
@@ -742,7 +789,7 @@ unsafe extern "C" fn start_game_clicked(
     _prop: *mut obs_property_t,
     data: *mut c_void,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     if !state.game_path.exists() {
         warn!("No path provided to start a game.");
@@ -821,239 +868,13 @@ unsafe extern "C" fn start_game_clicked(
 }
 
 #[cfg(feature = "auto-splitting")]
-const DEFAULT_AUTO_SPLITTER_LIST_SETTING: *const c_char = cstr!("obs-livesplit-one-default-choice");
-#[cfg(feature = "auto-splitting")]
-const DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP: *const c_char = cstr!("Waiting for setting selection");
-
-#[cfg(feature = "auto-splitting")]
-unsafe extern "C" fn settings_list_modified(
-    data: *mut c_void,
-    props: *mut obs_properties_t,
-    _prop: *mut obs_property_t,
-    settings: *mut obs_data_t,
-) -> bool {
-    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
-    let list_setting_string = CStr::from_ptr(obs_data_get_string(
-        settings,
-        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
-    ));
-
-    let tooltip_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP);
-    let enable_property = obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
-    let file_select_property =
-        obs_properties_get(props, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
-
-    macro_rules! reset_auto_splitter_setting_ui {
-        () => {
-            obs_property_set_description(tooltip_property, DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP);
-            obs_property_set_enabled(enable_property, false);
-            obs_property_set_enabled(file_select_property, false);
-            obs_property_set_visible(enable_property, false);
-            obs_property_set_visible(file_select_property, false);
-            return true;
-        };
-    }
-
-    if list_setting_string == default_setting_string {
-        reset_auto_splitter_setting_ui!();
-    }
-
-    let state: &mut State = &mut *data.cast();
-
-    let list_setting_string = list_setting_string.to_str().unwrap_or_default();
-
-    let user_setting = state
-        .auto_splitter_settings
-        .iter()
-        .find(|x| x.key.as_ref() == list_setting_string);
-
-    if let Some(user_setting) = user_setting {
-        match user_setting.kind {
-            WidgetKind::Title { heading_level: _ } => {
-                obs_property_set_enabled(enable_property, false);
-                obs_property_set_enabled(file_select_property, false);
-                obs_property_set_visible(enable_property, false);
-                obs_property_set_visible(file_select_property, false);
-            }
-            WidgetKind::Bool {
-                default_value: default,
-            } => {
-                match state
-                    .global_timer
-                    .auto_splitter
-                    .settings_map()
-                    .unwrap_or_default()
-                    .get(user_setting.key.as_ref())
-                {
-                    Some(Value::Bool(value)) => {
-                        obs_property_set_enabled(enable_property, true);
-                        obs_property_set_enabled(file_select_property, false);
-                        obs_property_set_visible(enable_property, true);
-                        obs_property_set_visible(file_select_property, false);
-                        obs_data_set_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE, *value);
-                    }
-                    _ => {
-                        obs_property_set_enabled(enable_property, true);
-                        obs_property_set_enabled(file_select_property, false);
-                        obs_property_set_visible(enable_property, true);
-                        obs_property_set_visible(file_select_property, false);
-                        obs_data_set_bool(
-                            settings,
-                            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
-                            default,
-                        );
-                    }
-                }
-            }
-            WidgetKind::Choice { .. } => {
-                warn!("Unimplemented setting type Choice");
-            }
-            WidgetKind::FileSelect { .. } => {
-                obs_property_set_enabled(enable_property, false);
-                obs_property_set_enabled(file_select_property, true);
-                obs_property_set_visible(enable_property, false);
-                obs_property_set_visible(file_select_property, true);
-                // Needs to outlive the pointer.
-                let path_cs;
-                let path_ptr = match state
-                    .global_timer
-                    .auto_splitter
-                    .settings_map()
-                    .unwrap_or_default()
-                    .get(user_setting.key.as_ref())
-                {
-                    Some(Value::String(value)) => {
-                        path_cs = wasi_path::to_native(value, true)
-                            .filter(|p| p.exists())
-                            .and_then(|p| CString::new(p.as_os_str().as_encoded_bytes()).ok())
-                            .unwrap_or_default();
-
-                        path_cs.as_ptr()
-                    }
-                    _ => ptr::null(),
-                };
-                obs_data_set_string(
-                    settings,
-                    SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT,
-                    path_ptr,
-                );
-            }
-        }
-
-        match &user_setting.tooltip {
-            Some(tooltip) => {
-                let tooltip = CString::new(tooltip.to_string()).unwrap_or_default();
-                obs_property_set_description(tooltip_property, tooltip.as_ptr());
-            }
-            None => {
-                obs_property_set_description(tooltip_property, cstr!("No tooltip to show"));
-            }
-        }
-
-        true
-    } else {
-        reset_auto_splitter_setting_ui!();
-    }
-}
-
-#[cfg(feature = "auto-splitting")]
-unsafe extern "C" fn settings_enable_modified(
-    data: *mut c_void,
-    _props: *mut obs_properties_t,
-    _prop: *mut obs_property_t,
-    settings: *mut obs_data_t,
-) -> bool {
-    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
-    let list_setting_string = CStr::from_ptr(obs_data_get_string(
-        settings,
-        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
-    ));
-
-    if list_setting_string == default_setting_string {
-        return false;
-    }
-
-    let state: &mut State = &mut *data.cast();
-
-    let value = obs_data_get_bool(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE);
-
-    let setting_key = match list_setting_string.to_str() {
-        Ok(value) => value,
-        Err(_) => {
-            warn!("Tried to set invalid setting key");
-            return false;
-        }
-    };
-
-    match state.global_timer.auto_splitter.settings_map() {
-        Some(mut map) => {
-            map.insert(Arc::from(setting_key), Value::Bool(value));
-            state.global_timer.auto_splitter.set_settings_map(map);
-        }
-        None => {
-            warn!("The settings map could not be loaded");
-            return false;
-        }
-    };
-
-    true
-}
-
-#[cfg(feature = "auto-splitting")]
-unsafe extern "C" fn settings_file_select_modified(
-    data: *mut c_void,
-    _props: *mut obs_properties_t,
-    _prop: *mut obs_property_t,
-    settings: *mut obs_data_t,
-) -> bool {
-    let default_setting_string = CStr::from_ptr(DEFAULT_AUTO_SPLITTER_LIST_SETTING);
-    let list_setting_string = CStr::from_ptr(obs_data_get_string(
-        settings,
-        SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
-    ));
-
-    if list_setting_string == default_setting_string {
-        return false;
-    }
-
-    let state: &mut State = &mut *data.cast();
-
-    let value = obs_data_get_string(settings, SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT);
-
-    let setting_key = match list_setting_string.to_str() {
-        Ok(value) => value,
-        Err(_) => {
-            warn!("Tried to set invalid setting key");
-            return false;
-        }
-    };
-
-    match state.global_timer.auto_splitter.settings_map() {
-        Some(mut map) => {
-            let value_str = CStr::from_ptr(value).to_string_lossy();
-            let Some(wasi_str) = wasi_path::from_native(Path::new(value_str.as_ref())) else {
-                warn!("Tried to set invalid setting value");
-                return false;
-            };
-            map.insert(Arc::from(setting_key), Value::String(Arc::from(wasi_str)));
-            state.global_timer.auto_splitter.set_settings_map(map);
-        }
-        None => {
-            warn!("The settings map could not be loaded");
-            return false;
-        }
-    };
-    true
-}
-
-#[cfg(feature = "auto-splitting")]
 unsafe extern "C" fn use_local_auto_splitter_modified(
     data: *mut c_void,
     props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     settings: *mut obs_data_t,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let use_local_auto_splitter = obs_data_get_bool(settings, SETTINGS_LOCAL_AUTO_SPLITTER);
 
@@ -1074,7 +895,7 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
 
     obs_property_set_visible(local_auto_splitter_path, use_local_auto_splitter);
 
-    obs_property_set_description(auto_splitter_activate, cstr!("Activate"));
+    obs_property_set_description(auto_splitter_activate, cstr!(c"Activate"));
 
     update_auto_splitter_ui(
         auto_splitter_info,
@@ -1095,7 +916,7 @@ unsafe extern "C" fn splits_path_modified(
     let splits_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_SPLITS_PATH).cast());
     let splits_path = PathBuf::from(splits_path.to_string_lossy().into_owned());
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     handle_splits_path_change(state, splits_path);
 
@@ -1131,7 +952,7 @@ unsafe fn update_auto_splitter_ui(
             obs_property_set_enabled(activate_button, false);
             obs_property_set_description(
                 info_text,
-                cstr!("This game's auto splitter is incompatible with LiveSplit One."),
+                cstr!(c"This game's auto splitter is incompatible with LiveSplit One."),
             );
         } else {
             obs_property_set_enabled(activate_button, true);
@@ -1149,7 +970,7 @@ unsafe fn update_auto_splitter_ui(
         obs_property_set_enabled(website_button, false);
         obs_property_set_description(
             info_text,
-            cstr!("No auto splitter available for this game."),
+            cstr!(c"No auto splitter available for this game."),
         );
     }
 }
@@ -1186,7 +1007,7 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
     prop: *mut obs_property_t,
     data: *mut c_void,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     state
         .global_timer
@@ -1229,9 +1050,9 @@ unsafe fn auto_splitter_update_activation_label(
     obs_property_set_description(
         activate_button_prop,
         if !is_active {
-            cstr!("Activate")
+            cstr!(c"Activate")
         } else {
-            cstr!("Deactivate")
+            cstr!(c"Deactivate")
         },
     );
 }
@@ -1242,7 +1063,7 @@ unsafe extern "C" fn auto_splitter_open_website(
     _prop: *mut obs_property_t,
     data: *mut c_void,
 ) -> bool {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let website = auto_splitters::get_list()
         .get_website_for_game(state.global_timer.timer.read().unwrap().run().game_name());
@@ -1266,7 +1087,7 @@ unsafe extern "C" fn auto_splitter_open_website(
 }
 
 unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let phase = state.global_timer.timer.read().unwrap().current_phase();
     match phase {
         TimerPhase::NotRunning => OBS_MEDIA_STATE_STOPPED,
@@ -1277,7 +1098,7 @@ unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
 }
 
 unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let mut timer = state.global_timer.timer.write().unwrap();
     match timer.current_phase() {
         TimerPhase::NotRunning => {
@@ -1300,7 +1121,7 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
 }
 
 unsafe extern "C" fn media_restart(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     if state.auto_save {
         save_splits_file(state);
     }
@@ -1310,7 +1131,7 @@ unsafe extern "C" fn media_restart(data: *mut c_void) {
 }
 
 unsafe extern "C" fn media_stop(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.global_timer.timer.write().unwrap().reset(true);
     if state.auto_save {
         save_splits_file(state);
@@ -1318,17 +1139,17 @@ unsafe extern "C" fn media_stop(data: *mut c_void) {
 }
 
 unsafe extern "C" fn media_next(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.global_timer.timer.write().unwrap().split();
 }
 
 unsafe extern "C" fn media_previous(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.global_timer.timer.write().unwrap().undo_split();
 }
 
 unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let timer = state.global_timer.timer.read().unwrap();
     let time = timer.snapshot().current_time()[timer.current_timing_method()].unwrap_or_default();
     let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
@@ -1336,7 +1157,7 @@ unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
 }
 
 unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let timer = state.global_timer.timer.read().unwrap();
     let time = timer
         .run()
@@ -1349,80 +1170,67 @@ unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
     secs * 1000 + (nanos / 1_000_000) as i64
 }
 
-const SETTINGS_WIDTH: *const c_char = cstr!("width");
-const SETTINGS_HEIGHT: *const c_char = cstr!("height");
-const SETTINGS_USE_GAME_ARGUMENTS: *const c_char = cstr!("game_use_arguments");
-const SETTINGS_GAME_PATH: *const c_char = cstr!("game_path");
-const SETTINGS_GAME_ARGUMENTS: *const c_char = cstr!("game_arguments");
-const SETTINGS_GAME_WORKING_DIRECTORY: *const c_char = cstr!("game_working_directory");
-const SETTINGS_GAME_ENVIRONMENT_LIST: *const c_char = cstr!("game_environment_list");
-const SETTINGS_START_GAME: *const c_char = cstr!("start_game");
-const SETTINGS_SPLITS_PATH: *const c_char = cstr!("splits_path");
-const SETTINGS_AUTO_SAVE: *const c_char = cstr!("auto_save");
+const SETTINGS_WIDTH: *const c_char = cstr!(c"width");
+const SETTINGS_HEIGHT: *const c_char = cstr!(c"height");
+const SETTINGS_USE_GAME_ARGUMENTS: *const c_char = cstr!(c"game_use_arguments");
+const SETTINGS_GAME_PATH: *const c_char = cstr!(c"game_path");
+const SETTINGS_GAME_ARGUMENTS: *const c_char = cstr!(c"game_arguments");
+const SETTINGS_GAME_WORKING_DIRECTORY: *const c_char = cstr!(c"game_working_directory");
+const SETTINGS_GAME_ENVIRONMENT_LIST: *const c_char = cstr!(c"game_environment_list");
+const SETTINGS_START_GAME: *const c_char = cstr!(c"start_game");
+const SETTINGS_SPLITS_PATH: *const c_char = cstr!(c"splits_path");
+const SETTINGS_AUTO_SAVE: *const c_char = cstr!(c"auto_save");
 #[cfg(feature = "auto-splitting")]
-const SETTINGS_LOCAL_AUTO_SPLITTER: *const c_char = cstr!("local_auto_splitter");
+const SETTINGS_LOCAL_AUTO_SPLITTER: *const c_char = cstr!(c"local_auto_splitter");
 #[cfg(feature = "auto-splitting")]
-const SETTINGS_LOCAL_AUTO_SPLITTER_PATH: *const c_char = cstr!("local_auto_splitter_path");
+const SETTINGS_LOCAL_AUTO_SPLITTER_PATH: *const c_char = cstr!(c"local_auto_splitter_path");
 #[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_INFO: *const c_char = cstr!("auto_splitter_info");
+const SETTINGS_AUTO_SPLITTER_INFO: *const c_char = cstr!(c"auto_splitter_info");
 #[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_ACTIVATE: *const c_char = cstr!("auto_splitter_activate");
+const SETTINGS_AUTO_SPLITTER_ACTIVATE: *const c_char = cstr!(c"auto_splitter_activate");
 #[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_WEBSITE: *const c_char = cstr!("auto_splitter_website");
-#[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_SETTINGS_LIST: *const c_char = cstr!("auto_splitter_settings_list");
-#[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP: *const c_char =
-    cstr!("auto_splitter_settings_tooltip");
-#[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE: *const c_char =
-    cstr!("auto_splitter_settings_enable");
-#[cfg(feature = "auto-splitting")]
-const SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT: *const c_char =
-    cstr!("auto_splitter_settings_file_select");
-const SETTINGS_LAYOUT_PATH: *const c_char = cstr!("layout_path");
-const SETTINGS_SAVE_SPLITS: *const c_char = cstr!("save_splits");
+const SETTINGS_AUTO_SPLITTER_WEBSITE: *const c_char = cstr!(c"auto_splitter_website");
+const SETTINGS_LAYOUT_PATH: *const c_char = cstr!(c"layout_path");
+const SETTINGS_SAVE_SPLITS: *const c_char = cstr!(c"save_splits");
 
 unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t {
-    debug!("We are getting the properties.");
-
     let props = obs_properties_create();
-    obs_properties_add_int(props, SETTINGS_WIDTH, cstr!("Width"), 10, 8200, 10);
-    obs_properties_add_int(props, SETTINGS_HEIGHT, cstr!("Height"), 10, 8200, 10);
+    obs_properties_add_int(props, SETTINGS_WIDTH, cstr!(c"Width"), 10, 8200, 10);
+    obs_properties_add_int(props, SETTINGS_HEIGHT, cstr!(c"Height"), 10, 8200, 10);
 
     let splits_path = obs_properties_add_path(
         props,
         SETTINGS_SPLITS_PATH,
-        cstr!("Splits"),
+        cstr!(c"Splits"),
         OBS_PATH_FILE,
-        cstr!("LiveSplit Splits (*.lss)"),
+        cstr!(c"LiveSplit Splits (*.lss)"),
         ptr::null(),
     );
     obs_properties_add_bool(
         props,
         SETTINGS_AUTO_SAVE,
-        cstr!("Automatically save splits file on reset"),
+        cstr!(c"Automatically save splits file on reset"),
     );
     obs_properties_add_button(
         props,
         SETTINGS_SAVE_SPLITS,
-        cstr!("Save Splits"),
+        cstr!(c"Save Splits"),
         Some(save_splits),
     );
 
     obs_properties_add_path(
         props,
         SETTINGS_LAYOUT_PATH,
-        cstr!("Layout"),
+        cstr!(c"Layout"),
         OBS_PATH_FILE,
-        cstr!("LiveSplit Layouts (*.lsl *.ls1l)"),
+        cstr!(c"LiveSplit Layouts (*.lsl *.ls1l)"),
         ptr::null(),
     );
 
     let use_game_arguments = obs_properties_add_bool(
         props,
         SETTINGS_USE_GAME_ARGUMENTS,
-        cstr!("Advanced start game options"),
+        cstr!(c"Advanced start game options"),
     );
 
     obs_property_set_modified_callback2(
@@ -1434,35 +1242,35 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     obs_properties_add_path(
         props,
         SETTINGS_GAME_PATH,
-        cstr!("Game path"),
+        cstr!(c"Game Path"),
         OBS_PATH_FILE,
-        cstr!("Executable files (*)"),
+        cstr!(c"Executable files (*)"),
         ptr::null(),
     );
     let game_arguments = obs_properties_add_text(
         props,
         SETTINGS_GAME_ARGUMENTS,
-        cstr!("Game arguments"),
+        cstr!(c"Game Arguments"),
         OBS_TEXT_DEFAULT,
     );
     let game_working_directory = obs_properties_add_path(
         props,
         SETTINGS_GAME_WORKING_DIRECTORY,
-        cstr!("Working directory"),
+        cstr!(c"Working Directory"),
         OBS_PATH_DIRECTORY,
-        cstr!("Directories"),
+        cstr!(c"Directories"),
         ptr::null(),
     );
     let game_env_list = obs_properties_add_editable_list(
         props,
         SETTINGS_GAME_ENVIRONMENT_LIST,
-        cstr!("Game environment variables (KEY=VALUE)"),
+        cstr!(c"Game Environment Variables (KEY=VALUE)"),
         OBS_EDITABLE_LIST_TYPE_STRINGS,
         ptr::null(),
         ptr::null(),
     );
 
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let uses_game_arguments = state.use_game_arguments;
     obs_property_set_visible(game_arguments, uses_game_arguments);
@@ -1472,7 +1280,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     obs_properties_add_button(
         props,
         SETTINGS_START_GAME,
-        cstr!("Start game"),
+        cstr!(c"Start Game"),
         Some(start_game_clicked),
     );
 
@@ -1483,7 +1291,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         let use_local_auto_splitter = obs_properties_add_bool(
             props,
             SETTINGS_LOCAL_AUTO_SPLITTER,
-            cstr!("Use local auto splitter"),
+            cstr!(c"Use local auto splitter"),
         );
 
         obs_property_set_modified_callback2(
@@ -1495,16 +1303,16 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         let local_auto_splitter_path = obs_properties_add_path(
             props,
             SETTINGS_LOCAL_AUTO_SPLITTER_PATH,
-            cstr!("Local Auto Splitter file"),
+            cstr!(c"Local Auto Splitter File"),
             OBS_PATH_FILE,
-            cstr!("LiveSplit One Auto Splitter (*.wasm)"),
+            cstr!(c"LiveSplit One Auto Splitter (*.wasm)"),
             ptr::null(),
         );
 
         let info_text = obs_properties_add_text(
             props,
             SETTINGS_AUTO_SPLITTER_INFO,
-            cstr!("No splits loaded"),
+            cstr!(c"No splits loaded"),
             OBS_TEXT_INFO,
         );
 
@@ -1513,8 +1321,8 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             .auto_splitter_is_enabled
             .load(atomic::Ordering::Relaxed)
         {
-            true => cstr!("Deactivate"),
-            false => cstr!("Activate"),
+            true => cstr!(c"Deactivate"),
+            false => cstr!(c"Activate"),
         };
 
         let activate_button = obs_properties_add_button(
@@ -1527,7 +1335,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         let website_button = obs_properties_add_button(
             props,
             SETTINGS_AUTO_SPLITTER_WEBSITE,
-            cstr!("Website"),
+            cstr!(c"Website"),
             Some(auto_splitter_open_website),
         );
 
@@ -1553,87 +1361,188 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             return props;
         }
 
-        let settings_list = obs_properties_add_list(
-            props,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
-            cstr!("Custom auto splitter settings"),
-            OBS_COMBO_TYPE_LIST,
-            OBS_COMBO_FORMAT_STRING,
-        );
+        let auto_splitter_properties = obs_properties_create();
 
-        obs_properties_add_text(
-            props,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_TOOLTIP,
-            DEFAULT_AUTO_SPLITTER_SETTING_TOOLTIP,
-            OBS_TEXT_INFO,
-        );
+        let mut parents = vec![auto_splitter_properties];
 
-        let settings_enable = obs_properties_add_bool(
-            props,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
-            cstr!("Enable"),
-        );
+        for widget in state.auto_splitter_widgets.iter() {
+            let widget_description = CString::new(widget.description.as_ref());
 
-        let settings_file_select = obs_properties_add_path(
-            props,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_FILE_SELECT,
-            cstr!("Select a file"),
-            OBS_PATH_FILE,
-            cstr!("All files (*.*)"),
-            ptr::null(),
-        );
+            let setting_key = CString::from_vec_with_nul(
+                format!("auto_splitter_setting_{}\0", widget.key).into(),
+            );
 
-        obs_property_list_add_string(
-            settings_list,
-            cstr!("Select a setting to change"),
-            DEFAULT_AUTO_SPLITTER_LIST_SETTING,
-        );
+            if let (Ok(setting_key), Ok(widget_description)) = (setting_key, widget_description) {
+                match &widget.kind {
+                    WidgetKind::Bool { default_value } => {
+                        let property = obs_properties_add_bool(
+                            *parents.last().unwrap(),
+                            setting_key.as_ptr(),
+                            widget_description.as_ptr(),
+                        );
 
-        obs_data_set_string(
-            state.obs_settings,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_LIST,
-            DEFAULT_AUTO_SPLITTER_LIST_SETTING,
-        );
-        obs_data_set_bool(
-            state.obs_settings,
-            SETTINGS_AUTO_SPLITTER_SETTINGS_ENABLE,
-            false,
-        );
+                        if let Some(tooltip) = widget
+                            .tooltip
+                            .as_ref()
+                            .and_then(|t| CString::new(t.as_bytes()).ok())
+                        {
+                            obs_property_set_long_description(property, tooltip.as_ptr());
+                        }
 
-        obs_property_set_modified_callback2(settings_list, Some(settings_list_modified), data);
-        obs_property_set_modified_callback2(settings_enable, Some(settings_enable_modified), data);
-        obs_property_set_modified_callback2(
-            settings_file_select,
-            Some(settings_file_select_modified),
-            data,
-        );
+                        if let Some(value) = state
+                            .auto_splitter_map
+                            .get(&widget.key)
+                            .and_then(|v| v.to_bool())
+                        {
+                            obs_data_set_bool(state.obs_settings, setting_key.as_ptr(), value);
+                        } else {
+                            obs_data_erase(state.obs_settings, setting_key.as_ptr());
+                        }
 
-        let auto_splitter_settings = state.global_timer.auto_splitter.settings_widgets();
+                        obs_data_set_default_bool(
+                            state.obs_settings,
+                            setting_key.as_ptr(),
+                            *default_value,
+                        );
+                    }
+                    WidgetKind::Title { heading_level } => {
+                        parents.truncate(*heading_level as usize + 1);
 
-        if let Some(auto_splitter_settings) = auto_splitter_settings {
-            state.auto_splitter_settings = auto_splitter_settings;
+                        let auto_splitter_properties = obs_properties_create();
+                        let property = obs_properties_add_group(
+                            *parents.last().unwrap(),
+                            setting_key.as_ptr(),
+                            widget_description.as_ptr(),
+                            OBS_GROUP_NORMAL,
+                            auto_splitter_properties,
+                        );
 
-            for setting in state.auto_splitter_settings.iter() {
-                let setting_description = CString::new(setting.description.as_ref());
+                        if let Some(tooltip) = widget
+                            .tooltip
+                            .as_ref()
+                            .and_then(|t| CString::new(t.as_bytes()).ok())
+                        {
+                            obs_property_set_long_description(property, tooltip.as_ptr());
+                        }
 
-                let setting_key = CString::new(setting.key.as_ref());
+                        parents.push(auto_splitter_properties);
+                    }
+                    WidgetKind::Choice {
+                        default_option_key,
+                        options,
+                    } => {
+                        let property = obs_properties_add_list(
+                            *parents.last().unwrap(),
+                            setting_key.as_ptr(),
+                            widget_description.as_ptr(),
+                            OBS_COMBO_TYPE_LIST,
+                            OBS_COMBO_FORMAT_STRING,
+                        );
 
-                if let (Ok(setting_key), Ok(setting_description)) =
-                    (setting_key, setting_description)
-                {
-                    obs_property_list_add_string(
-                        settings_list,
-                        setting_description.as_ptr(),
-                        setting_key.as_ptr(),
-                    );
-                } else {
-                    warn!(
-                        "Couldn't add invalid setting to the settings list ({}: {})",
-                        setting.key, setting.description
-                    );
+                        if let Some(tooltip) = widget
+                            .tooltip
+                            .as_ref()
+                            .and_then(|t| CString::new(t.as_bytes()).ok())
+                        {
+                            obs_property_set_long_description(property, tooltip.as_ptr());
+                        }
+
+                        for option in &**options {
+                            let option_key =
+                                CString::from_vec_with_nul(format!("{}\0", option.key).into());
+                            let option_description = CString::from_vec_with_nul(
+                                format!("{}\0", option.description).into(),
+                            );
+
+                            if let (Ok(option_key), Ok(option_description)) =
+                                (option_key, option_description)
+                            {
+                                obs_property_list_add_string(
+                                    property,
+                                    option_description.as_ptr(),
+                                    option_key.as_ptr(),
+                                );
+                            }
+                        }
+
+                        if let Some(value) = state
+                            .auto_splitter_map
+                            .get(&widget.key)
+                            .and_then(|v| v.as_string())
+                        {
+                            if let Ok(value) =
+                                CString::from_vec_with_nul(format!("{}\0", value).into())
+                            {
+                                obs_data_set_string(
+                                    state.obs_settings,
+                                    setting_key.as_ptr(),
+                                    value.as_ptr(),
+                                );
+                            }
+                        } else {
+                            obs_data_erase(state.obs_settings, setting_key.as_ptr());
+                        }
+
+                        if let Ok(default_option_key) =
+                            CString::from_vec_with_nul(format!("{}\0", default_option_key).into())
+                        {
+                            obs_data_set_default_string(
+                                state.obs_settings,
+                                setting_key.as_ptr(),
+                                default_option_key.as_ptr(),
+                            );
+                        }
+                    }
+                    WidgetKind::FileSelect { filters } => {
+                        let mut filter_buf = Vec::new();
+                        build_filter(filters, &mut filter_buf);
+                        filter_buf.push(b'\0');
+
+                        let property = obs_properties_add_path(
+                            *parents.last().unwrap(),
+                            setting_key.as_ptr(),
+                            widget_description.as_ptr(),
+                            OBS_PATH_FILE,
+                            filter_buf.as_ptr().cast(),
+                            ptr::null(),
+                        );
+
+                        if let Some(tooltip) = widget
+                            .tooltip
+                            .as_ref()
+                            .and_then(|t| CString::new(t.as_bytes()).ok())
+                        {
+                            obs_property_set_long_description(property, tooltip.as_ptr());
+                        }
+
+                        if let Some(value) = state
+                            .auto_splitter_map
+                            .get(&widget.key)
+                            .and_then(|v| v.as_string())
+                            .and_then(|s| wasi_path::to_native(s, true))
+                            .filter(|p| p.exists())
+                            .and_then(|p| CString::new(p.as_os_str().as_encoded_bytes()).ok())
+                        {
+                            obs_data_set_string(
+                                state.obs_settings,
+                                setting_key.as_ptr(),
+                                value.as_ptr(),
+                            );
+                        } else {
+                            obs_data_erase(state.obs_settings, setting_key.as_ptr());
+                        }
+                    }
                 }
             }
         }
+
+        obs_properties_add_group(
+            props,
+            cstr!(c"auto_splitter_settings_group"),
+            cstr!(c"Auto Splitter Settings"),
+            OBS_GROUP_NORMAL,
+            auto_splitter_properties,
+        );
     }
 
     props
@@ -1646,12 +1555,12 @@ unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
 }
 
 unsafe extern "C" fn activate(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.activated = true;
 }
 
 unsafe extern "C" fn deactivate(data: *mut c_void) {
-    let state: &mut State = &mut *data.cast();
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.activated = false;
 }
 
@@ -1661,11 +1570,10 @@ fn default_run() -> (Run, bool) {
     (run, false)
 }
 
-unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
-    debug!("Reloading settings.");
+unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
-    let state: &mut State = &mut *data.cast();
-    let settings = parse_settings(settings);
+    let settings = parse_settings(settings_obj);
 
     handle_splits_path_change(state, settings.splits_path);
 
@@ -1689,6 +1597,69 @@ unsafe extern "C" fn update(data: *mut c_void, settings: *mut obs_data_t) {
 
             if let Some(local_auto_splitter) = &state.local_auto_splitter {
                 auto_splitter_load(&state.global_timer, local_auto_splitter.clone());
+            }
+        }
+
+        loop {
+            let Some(original) = state.global_timer.auto_splitter.settings_map() else {
+                break;
+            };
+            let mut map = original.clone();
+
+            for widget in state.auto_splitter_widgets.iter() {
+                let key = &widget.key;
+                let Ok(data_key) = CString::new(format!("auto_splitter_setting_{}", key)) else {
+                    continue;
+                };
+
+                match &widget.kind {
+                    WidgetKind::Title { .. } => {}
+                    WidgetKind::Bool { default_value } => {
+                        let value = obs_data_get_bool(settings_obj, data_key.as_ptr());
+                        if value != *default_value {
+                            map.insert(key.clone(), Value::Bool(value));
+                        } else {
+                            map.remove(key);
+                        }
+                    }
+                    WidgetKind::Choice {
+                        default_option_key, ..
+                    } => {
+                        if let Some(value) =
+                            CStr::from_ptr(obs_data_get_string(settings_obj, data_key.as_ptr()))
+                                .to_str()
+                                .ok()
+                                .filter(|v| *v != &**default_option_key)
+                        {
+                            map.insert(key.clone(), Value::String(Arc::from(value)));
+                        } else {
+                            map.remove(key);
+                        }
+                    }
+                    WidgetKind::FileSelect { .. } => {
+                        if let Some(value) =
+                            CStr::from_ptr(obs_data_get_string(settings_obj, data_key.as_ptr()))
+                                .to_str()
+                                .ok()
+                                .filter(|v| !v.is_empty())
+                                .and_then(|s| wasi_path::from_native(Path::new(s)))
+                        {
+                            map.insert(key.clone(), Value::String(Arc::from(value)));
+                        } else {
+                            map.remove(key);
+                        }
+                    }
+                }
+            }
+
+            if state
+                .global_timer
+                .auto_splitter
+                .set_settings_map_if_unchanged(&original, map.clone())
+                != Some(false)
+            {
+                state.auto_splitter_map = map;
+                break;
             }
         }
     }
@@ -1768,7 +1739,7 @@ impl Log for ObsLog {
 #[no_mangle]
 pub extern "C" fn obs_module_load() -> bool {
     static SOURCE_INFO: UnsafeMultiThread<obs_source_info> = UnsafeMultiThread(obs_source_info {
-        id: cstr!("livesplit-one"),
+        id: cstr!(c"livesplit-one"),
         type_: OBS_SOURCE_TYPE_INPUT,
         output_flags: OBS_SOURCE_VIDEO
             | OBS_SOURCE_CUSTOM_DRAW
@@ -1835,4 +1806,204 @@ pub extern "C" fn obs_module_load() -> bool {
     auto_splitters::set_up();
 
     true
+}
+
+#[cfg(feature = "auto-splitting")]
+fn build_filter(filters: &[FileFilter], output: &mut Vec<u8>) {
+    for filter in filters.iter() {
+        match filter {
+            FileFilter::Name {
+                description,
+                pattern,
+            } => {
+                if pattern.contains(";;") {
+                    continue;
+                }
+                if !output.is_empty() {
+                    output.extend_from_slice(b";;");
+                }
+                match &description {
+                    Some(description) => {
+                        output.extend(
+                            description
+                                .trim()
+                                .split(";;")
+                                .flat_map(|s| s.bytes())
+                                .filter(|b| *b != b'(' && *b != b')'),
+                        );
+                        output.extend_from_slice(b" (");
+                    }
+                    None => {
+                        let mime = pattern.split(' ').find_map(|pat| {
+                            let (name, ext) = pat.rsplit_once('.')?;
+                            if name != "*" {
+                                return None;
+                            }
+                            if ext.contains('*') {
+                                return None;
+                            }
+                            mime_guess::from_ext(ext).first()
+                        });
+                        if let Some(mime) = mime {
+                            append_mime_desc(
+                                mime.type_().as_str(),
+                                mime.subtype().as_str(),
+                                output,
+                            );
+                        } else {
+                            let mut ext_count = 0;
+
+                            let only_contains_extensions = pattern.split(' ').all(|pat| {
+                                ext_count += 1;
+                                let Some((name, ext)) = pat.rsplit_once('.') else {
+                                    return false;
+                                };
+                                name == "*" && !ext.contains('*')
+                            });
+
+                            if only_contains_extensions {
+                                let mut char_buf = [0; 4];
+
+                                for (i, ext) in pattern
+                                    .split(' ')
+                                    .filter_map(|pat| {
+                                        let (_, ext) = pat.rsplit_once('.')?;
+                                        Some(ext)
+                                    })
+                                    .enumerate()
+                                {
+                                    if i != 0 {
+                                        output.extend_from_slice(if i + 1 != ext_count {
+                                            b", "
+                                        } else {
+                                            b" or "
+                                        });
+                                    }
+
+                                    for c in ext
+                                        .chars()
+                                        .flat_map(|c| c.to_uppercase())
+                                        .filter(|c| *c != '(' && *c != ')')
+                                    {
+                                        output.extend_from_slice(
+                                            c.encode_utf8(&mut char_buf).as_bytes(),
+                                        );
+                                    }
+                                }
+
+                                output.extend_from_slice(b" files (");
+                            } else {
+                                output.extend(
+                                    pattern.trim().bytes().filter(|&c| c != b'(' && c != b')'),
+                                );
+                                output.extend_from_slice(b" (");
+                            }
+                        }
+                    }
+                }
+
+                for (i, pattern) in pattern.split(' ').enumerate() {
+                    if i != 0 {
+                        output.push(b' ');
+                    }
+                    output.extend_from_slice(pattern.as_bytes());
+                }
+            }
+            FileFilter::MimeType(mime_type) => {
+                let Some((top, sub)) = mime_type.split_once('/') else {
+                    continue;
+                };
+                if top == "*" {
+                    continue;
+                }
+                let Some(extensions) = mime_guess::get_extensions(top, sub) else {
+                    continue;
+                };
+
+                if !output.is_empty() {
+                    output.extend_from_slice(b";;");
+                }
+
+                append_mime_desc(top, sub, output);
+
+                for (i, extension) in extensions.iter().enumerate() {
+                    if i != 0 {
+                        output.push(b' ');
+                    }
+                    output.extend_from_slice(b"*.");
+                    output.extend_from_slice(extension.as_bytes());
+                }
+            }
+        }
+
+        output.push(b')');
+    }
+
+    if !output.is_empty() {
+        output.extend_from_slice(b";;");
+    }
+    output.extend_from_slice(b"All files (*.*)");
+}
+
+#[cfg(feature = "auto-splitting")]
+fn append_mime_desc(top: &str, sub: &str, output: &mut Vec<u8>) {
+    let mut char_buf = [0; 4];
+
+    if sub != "*" {
+        // Strip vendor and x- prefixes
+
+        let sub = sub
+            .strip_prefix("vnd.")
+            .unwrap_or(sub)
+            .strip_prefix("x-")
+            .unwrap_or(sub);
+
+        // Capitalize the first letter
+
+        let mut chars = sub.chars();
+        if let Some(c) = chars
+            .by_ref()
+            .map(|c| match c {
+                '-' | '.' | '+' | '|' | '(' | ')' => ' ',
+                _ => c,
+            })
+            .next()
+        {
+            for c in c.to_uppercase() {
+                output.extend_from_slice(c.encode_utf8(&mut char_buf).as_bytes());
+            }
+        }
+
+        // Only capitalize chunks of the rest that are 4 characters or less as a
+        // heuristic to detect acronyms
+
+        let rem = chars.as_str();
+        for (i, piece) in rem.split(&['-', '.', '+', '|', ' ', '(', ')']).enumerate() {
+            if i != 0 {
+                output.push(b' ');
+            }
+            if piece.len() <= 4 - (i == 0) as usize {
+                for c in piece.chars() {
+                    for c in c.to_uppercase() {
+                        output.extend_from_slice(c.encode_utf8(&mut char_buf).as_bytes());
+                    }
+                }
+            } else {
+                output.extend_from_slice(piece.as_bytes());
+            }
+        }
+
+        output.push(b' ');
+    }
+
+    let mut chars = top.chars();
+    if sub == "*" {
+        if let Some(c) = chars.by_ref().find(|c| *c != '(' && *c != ')') {
+            for c in c.to_uppercase() {
+                output.extend_from_slice(c.encode_utf8(&mut char_buf).as_bytes());
+            }
+        }
+    }
+    output.extend(chars.as_str().bytes().filter(|b| *b != b'(' && *b != b')'));
+    output.extend_from_slice(if top == "image" { b"s (" } else { b" files (" });
 }
