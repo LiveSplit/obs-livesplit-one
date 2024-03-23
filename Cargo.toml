@@ -2,7 +2,8 @@
 name = "obs-livesplit-one"
 version = "0.1.0"
 authors = ["Christopher Serr <christopher.serr@gmail.com>"]
-edition = "2018"
+edition = "2021"
+rust-version = "1.77"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,7 +18,7 @@ livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features
     "software-rendering",
     "font-loading",
 ] }
-log = { version = "0.4.6", features = ["serde"] }
+log = { version = "0.4.6", features = ["serde", "release_max_level_info"] }
 serde = "1.0.188"
 serde_derive = "1.0.188"
 serde_json = "1.0.105"
@@ -30,10 +31,13 @@ quick-xml = { version = "0.31.0", features = [
     "serialize",
     "overlapped-lists",
 ], optional = true }
-reqwest = { version = "0.11.18", features = [
+reqwest = { version = "0.12.1", features = [
     "blocking",
+    "http2",
+    "macos-system-configuration",
     "rustls-tls-native-roots",
 ], default-features = false, optional = true }
+mime_guess = "2.0.4"
 
 [target.'cfg(not(any(target_os = "macos", windows)))'.dependencies]
 obs = { path = "obs" }

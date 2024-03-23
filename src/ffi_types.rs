@@ -63,6 +63,11 @@ pub const OBS_EDITABLE_LIST_TYPE_STRINGS: obs_editable_list_type = 0;
 pub const OBS_EDITABLE_LIST_TYPE_FILES: obs_editable_list_type = 1;
 pub const OBS_EDITABLE_LIST_TYPE_FILES_AND_URLS: obs_editable_list_type = 2;
 
+pub type obs_group_type = u32;
+pub const OBS_COMBO_INVALID: obs_group_type = 0;
+pub const OBS_GROUP_NORMAL: obs_group_type = 1;
+pub const OBS_GROUP_CHECKABLE: obs_group_type = 2;
+
 pub type obs_data_t = obs_data;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

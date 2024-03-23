@@ -102,6 +102,31 @@ pub extern "C" fn obs_data_get_bool(_data: *mut obs_data_t, _name: *const c_char
 }
 
 #[no_mangle]
+pub extern "C" fn obs_data_set_default_string(
+    _data: *mut obs_data_t,
+    _name: *const c_char,
+    _val: *const c_char,
+) {
+    panic!()
+}
+
+#[no_mangle]
+pub extern "C" fn obs_data_erase(_data: *mut obs_data_t, _name: *const c_char) {
+    panic!()
+}
+
+#[no_mangle]
+pub extern "C" fn obs_properties_add_group(
+    _props: *mut obs_properties_t,
+    _name: *const c_char,
+    _description: *const c_char,
+    _ty: obs_group_type,
+    _group: *mut obs_properties_t,
+) -> *mut obs_property_t {
+    panic!()
+}
+
+#[no_mangle]
 pub extern "C" fn obs_properties_add_int(
     _props: *mut obs_properties_t,
     _name: *const c_char,
@@ -211,6 +236,7 @@ pub extern "C" fn obs_properties_add_text(
 ) -> *mut obs_property_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_property_set_modified_callback2(
     _prop: *mut obs_property_t,
@@ -219,6 +245,7 @@ pub extern "C" fn obs_property_set_modified_callback2(
 ) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_property_set_description(
     _prop: *mut obs_property_t,
@@ -226,14 +253,25 @@ pub extern "C" fn obs_property_set_description(
 ) {
     panic!()
 }
+
+#[no_mangle]
+pub extern "C" fn obs_property_set_long_description(
+    _prop: *mut obs_property_t,
+    _long_description: *const c_char,
+) {
+    panic!()
+}
+
 #[no_mangle]
 pub extern "C" fn obs_property_set_enabled(_prop: *mut obs_property_t, _enabled: bool) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_property_set_visible(_prop: *mut obs_property_t, _visible: bool) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_properties_get(
     _props: *mut obs_properties_t,
@@ -241,6 +279,7 @@ pub extern "C" fn obs_properties_get(
 ) -> *mut obs_property_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_module_get_config_path(
     _module: *mut obs_module_t,
@@ -248,6 +287,7 @@ pub extern "C" fn obs_module_get_config_path(
 ) -> *const c_char {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_properties_add_list(
     _props: *mut obs_properties_t,
@@ -258,6 +298,7 @@ pub extern "C" fn obs_properties_add_list(
 ) -> *mut obs_property_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_properties_add_editable_list(
     _props: *mut obs_properties_t,
@@ -269,6 +310,7 @@ pub extern "C" fn obs_properties_add_editable_list(
 ) -> *mut obs_property_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_property_list_add_string(
     _prop: *mut obs_property_t,
@@ -277,10 +319,12 @@ pub extern "C" fn obs_property_list_add_string(
 ) -> size_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_set_bool(_data: *mut obs_data_t, _name: *const c_char, _val: bool) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_set_string(
     _data: *mut obs_data_t,
@@ -289,27 +333,38 @@ pub extern "C" fn obs_data_set_string(
 ) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_get_array(_data: *mut obs_data_t, _name: *const c_char) -> *mut c_void {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_array_count(_array: *mut c_void) -> size_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_array_item(_array: *mut c_void, _idx: size_t) -> *mut obs_data_t {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_array_release(_array: *mut c_void) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_release(_data: *mut obs_data_t) {
     panic!()
 }
+
 #[no_mangle]
 pub extern "C" fn obs_data_get_json(_data: *mut obs_data_t) -> *const c_char {
+    panic!()
+}
+
+#[no_mangle]
+pub extern "C" fn obs_source_update_properties(_source: *mut obs_source_t) {
     panic!()
 }

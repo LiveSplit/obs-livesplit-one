@@ -1,6 +1,6 @@
 use anyhow::{format_err, Context, Error, Result};
 use livesplit_core::util::PopulateString;
-use log::{error, info};
+use log::{error, info, warn};
 use quick_xml::de;
 use reqwest::{blocking::Client, Url};
 use serde_derive::Deserialize;
@@ -28,7 +28,7 @@ pub fn get_module_config_path() -> &'static PathBuf {
         unsafe {
             let config_path_ptr = obs_module_get_config_path(
                 crate::OBS_MODULE_POINTER.load(atomic::Ordering::Relaxed),
-                cstr!(""),
+                cstr!(c""),
             );
             if let Ok(config_path) = CStr::from_ptr(config_path_ptr).to_str() {
                 buffer.push(config_path);
@@ -131,7 +131,11 @@ impl List {
 impl Downloader {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .http2_prior_knowledge()
+                .build()
+                .unwrap(),
         }
     }
 
@@ -142,7 +146,10 @@ impl Downloader {
         };
 
         let from_file_error = match get_list_from_file(folder) {
-            Ok(list) => return Ok(list),
+            Ok(list) => {
+                warn!("Failed downloading the auto splitters list from GitHub. Using the cached version. Error: {from_github_error:?}");
+                return Ok(list);
+            }
             Err(e) => e,
         };
 

@@ -68,6 +68,22 @@ extern "C" {
         description: *const c_char,
     ) -> *mut obs_property_t;
     pub fn obs_data_get_bool(data: *mut obs_data_t, name: *const c_char) -> bool;
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_data_set_default_string(
+        data: *mut obs_data_t,
+        name: *const c_char,
+        val: *const c_char,
+    );
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_data_erase(data: *mut obs_data_t, name: *const c_char);
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_properties_add_group(
+        props: *mut obs_properties_t,
+        name: *const c_char,
+        description: *const c_char,
+        ty: obs_group_type,
+        group: *mut obs_properties_t,
+    ) -> *mut obs_property_t;
     pub fn obs_properties_add_text(
         props: *mut obs_properties_t,
         name: *const c_char,
@@ -137,6 +153,11 @@ extern "C" {
     #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_description(prop: *mut obs_property_t, description: *const c_char);
     #[cfg(feature = "auto-splitting")]
+    pub fn obs_property_set_long_description(
+        prop: *mut obs_property_t,
+        long_description: *const c_char,
+    );
+    #[cfg(feature = "auto-splitting")]
     pub fn obs_property_set_enabled(prop: *mut obs_property_t, enabled: bool);
     pub fn obs_property_set_visible(prop: *mut obs_property_t, visible: bool);
     pub fn obs_properties_get(
@@ -159,4 +180,7 @@ extern "C" {
     pub fn obs_data_array_release(array: *mut c_void);
     pub fn obs_data_release(data: *mut obs_data_t);
     pub fn obs_data_get_json(data: *mut obs_data_t) -> *const c_char;
+
+    #[cfg(feature = "auto-splitting")]
+    pub fn obs_source_update_properties(source: *mut obs_source_t);
 }
