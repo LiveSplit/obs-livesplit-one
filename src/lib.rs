@@ -56,6 +56,9 @@ use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
 use serde_derive::Deserialize;
 use serde_json::from_str;
 
+#[cfg(feature = "dbus")]
+use livesplit_core::dbus::DBusSystem;
+
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
@@ -140,6 +143,8 @@ struct State {
     obs_settings: *mut obs_data_t,
     #[cfg(feature = "auto-splitting")]
     source: *mut obs_source_t,
+    #[cfg(feature = "dbus")]
+    dbus: DBusSystem,
 }
 
 impl Drop for State {
@@ -352,6 +357,8 @@ impl State {
         if let Some(local_auto_splitter) = &local_auto_splitter {
             auto_splitter_load(&global_timer, local_auto_splitter.clone())
         }
+        #[cfg(feature = "dbus")]
+        let dbus = DBusSystem::new(global_timer.timer.clone());
 
         Self {
             #[cfg(feature = "auto-splitting")]
@@ -379,6 +386,8 @@ impl State {
             obs_settings,
             #[cfg(feature = "auto-splitting")]
             source: _source,
+            #[cfg(feature = "dbus")]
+            dbus,
         }
     }
 
@@ -1723,7 +1732,10 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
 struct ObsLog;
 
 impl Log for ObsLog {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        if metadata.target().starts_with("zbus") {
+            return false;
+        }
         true
     }
 

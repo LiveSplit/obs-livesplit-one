@@ -55,6 +55,9 @@ auto-splitting = [
     "dep:quick-xml",
     "dep:reqwest",
 ]
+dbus = [
+    "livesplit-core/dbus",
+]
 
 [profile.max-opt]
 inherits = "release"
