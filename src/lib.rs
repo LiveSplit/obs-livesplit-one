@@ -3,6 +3,7 @@ use std::{
     cmp::Ordering,
     ffi::{c_void, CStr},
     fs::{self, File},
+    future::Future,
     io::{BufWriter, Cursor},
     mem,
     os::raw::{c_char, c_int},
@@ -10,8 +11,8 @@ use std::{
     process::Command,
     ptr,
     sync::{
-        atomic::{self, AtomicPtr},
-        Arc, Mutex, Weak,
+        atomic::{self, AtomicBool, AtomicPtr},
+        Arc, Mutex, RwLock, RwLockReadGuard, Weak,
     },
 };
 
@@ -24,16 +25,16 @@ use ffi::{
     gs_technique_end, gs_technique_end_pass, gs_texture_create, gs_texture_destroy,
     gs_texture_set_image, gs_texture_t, obs_data_array_count, obs_data_array_item,
     obs_data_array_release, obs_data_get_array, obs_data_get_bool, obs_data_get_int,
-    obs_data_get_json, obs_data_get_string, obs_data_release, obs_data_set_default_bool,
-    obs_data_set_default_int, obs_data_t, obs_enter_graphics, obs_get_base_effect, obs_hotkey_id,
-    obs_hotkey_register_source, obs_hotkey_t, obs_leave_graphics, obs_mouse_event,
-    obs_properties_add_bool, obs_properties_add_button, obs_properties_add_editable_list,
-    obs_properties_add_int, obs_properties_add_path, obs_properties_add_text,
-    obs_properties_create, obs_properties_get, obs_property_set_modified_callback2,
-    obs_property_set_visible, obs_property_t, obs_register_source_s, obs_source_info, obs_source_t,
-    GS_DYNAMIC, GS_RGBA, LOG_WARNING, OBS_EDITABLE_LIST_TYPE_STRINGS,
-    OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
-    OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
+    obs_data_get_json, obs_data_get_string, obs_data_release, obs_data_set_bool,
+    obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
+    obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
+    obs_leave_graphics, obs_mouse_event, obs_properties_add_bool, obs_properties_add_button,
+    obs_properties_add_editable_list, obs_properties_add_int, obs_properties_add_path,
+    obs_properties_add_text, obs_properties_create, obs_properties_get,
+    obs_property_set_modified_callback2, obs_property_set_visible, obs_property_t,
+    obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
+    OBS_EDITABLE_LIST_TYPE_STRINGS, OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE,
+    OBS_PATH_FILE, OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
     OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
 use ffi_types::{
@@ -43,6 +44,7 @@ use ffi_types::{
 };
 
 use livesplit_core::{
+    event::{CommandSink, Event, Result, TimerQuery},
     layout::{self, LayoutSettings, LayoutState},
     rendering::software::Renderer,
     run::{
@@ -50,28 +52,26 @@ use livesplit_core::{
         saver::livesplit::{save_timer, IoWrite},
     },
     settings::ImageCache,
-    Layout, Run, Segment, SharedTimer, Timer, TimerPhase,
+    Layout, Run, Segment, TimeSpan, Timer, TimerPhase, TimingMethod,
 };
-use log::{debug, info, warn, Level, LevelFilter, Log, Metadata, Record};
+use log::{debug, error, info, warn, Level, LevelFilter, Log, Metadata, Record};
 use serde_derive::Deserialize;
 use serde_json::from_str;
 
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
-        obs_data_erase, obs_data_set_bool, obs_data_set_default_string, obs_data_set_string,
-        obs_properties_add_group, obs_properties_add_list, obs_property_list_add_string,
-        obs_property_set_description, obs_property_set_enabled, obs_property_set_long_description,
-        obs_source_update_properties, OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST,
-        OBS_GROUP_NORMAL, OBS_TEXT_INFO,
+        obs_data_erase, obs_data_set_default_string, obs_data_set_string, obs_properties_add_group,
+        obs_properties_add_list, obs_property_list_add_string, obs_property_set_description,
+        obs_property_set_enabled, obs_property_set_long_description, obs_source_update_properties,
+        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_GROUP_NORMAL, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting::{
         self,
         settings::{self, FileFilter, Value, Widget, WidgetKind},
         wasi_path,
     },
-    log::error,
-    std::{ffi::CString, sync::atomic::AtomicBool},
+    std::ffi::CString,
 };
 
 macro_rules! cstr {
@@ -103,13 +103,167 @@ unsafe impl<T> Sync for UnsafeMultiThread<T> {}
 unsafe impl<T> Send for UnsafeMultiThread<T> {}
 
 struct GlobalTimer {
-    path: PathBuf,
-    can_save_splits: bool,
-    timer: SharedTimer,
+    timer: Arc<InnerTimer>,
     #[cfg(feature = "auto-splitting")]
-    auto_splitter: auto_splitting::Runtime,
+    auto_splitter: auto_splitting::Runtime<Arc<InnerTimer>>,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_is_enabled: AtomicBool,
+}
+
+struct InnerTimer {
+    path: PathBuf,
+    can_save_splits: bool,
+    timer: RwLock<Timer>,
+    auto_save: AtomicBool,
+}
+
+impl InnerTimer {
+    fn save(&self) {
+        if self.can_save_splits {
+            if let Ok(file) = File::create(&self.path) {
+                let _ = save_timer(&self.get_timer(), IoWrite(BufWriter::new(file)));
+                info!("Saved splits to `{}`.", self.path.display());
+            }
+        }
+    }
+}
+
+impl CommandSink for InnerTimer {
+    fn start(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().start();
+        async move { result }
+    }
+
+    fn split(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().split();
+        async move { result }
+    }
+
+    fn split_or_start(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().split_or_start();
+        async move { result }
+    }
+
+    fn reset(&self, save_attempt: Option<bool>) -> impl Future<Output = Result> + 'static {
+        let result = self
+            .timer
+            .write()
+            .unwrap()
+            .reset(save_attempt.unwrap_or(true));
+
+        if result.is_ok() && self.auto_save.load(atomic::Ordering::Relaxed) {
+            self.save();
+        }
+
+        async move { result }
+    }
+
+    fn undo_split(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().undo_split();
+        async move { result }
+    }
+
+    fn skip_split(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().skip_split();
+        async move { result }
+    }
+
+    fn toggle_pause_or_start(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().toggle_pause_or_start();
+        async move { result }
+    }
+
+    fn pause(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().pause();
+        async move { result }
+    }
+
+    fn resume(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().resume();
+        async move { result }
+    }
+
+    fn undo_all_pauses(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().undo_all_pauses();
+        async move { result }
+    }
+
+    fn switch_to_previous_comparison(&self) -> impl Future<Output = Result> + 'static {
+        self.timer.write().unwrap().switch_to_previous_comparison();
+        async { Ok(Event::ComparisonChanged) }
+    }
+
+    fn switch_to_next_comparison(&self) -> impl Future<Output = Result> + 'static {
+        self.timer.write().unwrap().switch_to_next_comparison();
+        async { Ok(Event::ComparisonChanged) }
+    }
+
+    fn toggle_timing_method(&self) -> impl Future<Output = Result> + 'static {
+        self.timer.write().unwrap().toggle_timing_method();
+        async move { Ok(Event::TimingMethodChanged) }
+    }
+
+    fn set_game_time(&self, time: TimeSpan) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().set_game_time(time);
+        async move { result }
+    }
+
+    fn pause_game_time(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().pause_game_time();
+        async move { result }
+    }
+
+    fn resume_game_time(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().resume_game_time();
+        async move { result }
+    }
+
+    fn set_custom_variable(
+        &self,
+        name: &str,
+        value: &str,
+    ) -> impl Future<Output = Result> + 'static {
+        self.timer.write().unwrap().set_custom_variable(name, value);
+        async { Ok(Event::CustomVariableSet) }
+    }
+
+    fn set_current_comparison(&self, comparison: &str) -> impl Future<Output = Result> + 'static {
+        let result = self
+            .timer
+            .write()
+            .unwrap()
+            .set_current_comparison(comparison);
+        async move { result }
+    }
+
+    fn set_current_timing_method(
+        &self,
+        method: TimingMethod,
+    ) -> impl Future<Output = Result> + 'static {
+        self.timer
+            .write()
+            .unwrap()
+            .set_current_timing_method(method);
+        async { Ok(Event::TimingMethodChanged) }
+    }
+
+    fn initialize_game_time(&self) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().initialize_game_time();
+        async move { result }
+    }
+
+    fn set_loading_times(&self, time: TimeSpan) -> impl Future<Output = Result> + 'static {
+        let result = self.timer.write().unwrap().set_loading_times(time);
+        async move { result }
+    }
+}
+
+impl TimerQuery for InnerTimer {
+    type Guard<'a> = RwLockReadGuard<'a, Timer>;
+
+    fn get_timer(&self) -> Self::Guard<'_> {
+        self.timer.read().unwrap()
+    }
 }
 
 static TIMERS: Mutex<Vec<Weak<GlobalTimer>>> = Mutex::new(Vec::new());
@@ -123,7 +277,6 @@ struct State {
     game_environment_vars: Vec<(String, String)>,
     game_path: PathBuf,
     global_timer: Arc<GlobalTimer>,
-    auto_save: bool,
     layout: Layout,
     state: LayoutState,
     image_cache: ImageCache,
@@ -132,12 +285,11 @@ struct State {
     width: u32,
     height: u32,
     activated: bool,
+    obs_settings: *mut obs_data_t,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_widgets: Arc<Vec<Widget>>,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_map: settings::Map,
-    #[cfg(feature = "auto-splitting")]
-    obs_settings: *mut obs_data_t,
     #[cfg(feature = "auto-splitting")]
     source: *mut obs_source_t,
 }
@@ -210,16 +362,6 @@ fn parse_layout(path: &CStr) -> Option<Layout> {
     }
 
     layout::parser::parse(&file_data).ok()
-}
-
-fn save_splits_file(state: &State) -> bool {
-    if state.global_timer.can_save_splits {
-        let timer = state.global_timer.timer.read().unwrap();
-        if let Ok(file) = File::create(&state.global_timer.path) {
-            let _ = save_timer(&timer, IoWrite(BufWriter::new(file)));
-        }
-    }
-    false
 }
 
 unsafe fn get_game_environment_vars(settings: *mut obs_data_t) -> Vec<(String, String)> {
@@ -335,11 +477,15 @@ impl State {
             height,
         }: Settings,
         _source: *mut obs_source_t,
-        #[cfg(feature = "auto-splitting")] obs_settings: *mut obs_data_t,
+        obs_settings: *mut obs_data_t,
     ) -> Self {
         debug!("Loading settings.");
 
         let global_timer = get_global_timer(splits_path);
+        global_timer
+            .timer
+            .auto_save
+            .store(auto_save, atomic::Ordering::Relaxed);
 
         let state = LayoutState::default();
         let renderer = Renderer::new();
@@ -362,7 +508,6 @@ impl State {
             game_environment_vars,
             game_path,
             global_timer,
-            auto_save,
             layout,
             state,
             image_cache: ImageCache::new(),
@@ -371,12 +516,11 @@ impl State {
             width,
             height,
             activated: false,
+            obs_settings,
             #[cfg(feature = "auto-splitting")]
             auto_splitter_widgets: Arc::default(),
             #[cfg(feature = "auto-splitting")]
             auto_splitter_map: settings::Map::new(),
-            #[cfg(feature = "auto-splitting")]
-            obs_settings,
             #[cfg(feature = "auto-splitting")]
             source: _source,
         }
@@ -386,7 +530,7 @@ impl State {
         self.layout.update_state(
             &mut self.state,
             &mut self.image_cache,
-            &self.global_timer.timer.read().unwrap().snapshot(),
+            &self.global_timer.timer.get_timer().snapshot(),
         );
 
         self.renderer
@@ -446,7 +590,7 @@ unsafe extern "C" fn split(
         return;
     }
 
-    state.global_timer.timer.write().unwrap().split_or_start();
+    drop(state.global_timer.timer.split_or_start());
 }
 
 unsafe extern "C" fn reset(
@@ -464,11 +608,7 @@ unsafe extern "C" fn reset(
         return;
     }
 
-    state.global_timer.timer.write().unwrap().reset(true);
-
-    if state.auto_save {
-        save_splits_file(state);
-    }
+    drop(state.global_timer.timer.reset(None));
 }
 
 unsafe extern "C" fn undo(
@@ -486,7 +626,7 @@ unsafe extern "C" fn undo(
         return;
     }
 
-    state.global_timer.timer.write().unwrap().undo_split();
+    drop(state.global_timer.timer.undo_split());
 }
 
 unsafe extern "C" fn skip(
@@ -504,7 +644,7 @@ unsafe extern "C" fn skip(
         return;
     }
 
-    state.global_timer.timer.write().unwrap().skip_split();
+    drop(state.global_timer.timer.skip_split());
 }
 
 unsafe extern "C" fn pause(
@@ -522,12 +662,7 @@ unsafe extern "C" fn pause(
         return;
     }
 
-    state
-        .global_timer
-        .timer
-        .write()
-        .unwrap()
-        .toggle_pause_or_start();
+    drop(state.global_timer.timer.toggle_pause_or_start());
 }
 
 unsafe extern "C" fn undo_all_pauses(
@@ -545,7 +680,7 @@ unsafe extern "C" fn undo_all_pauses(
         return;
     }
 
-    state.global_timer.timer.write().unwrap().undo_all_pauses();
+    drop(state.global_timer.timer.undo_all_pauses());
 }
 
 unsafe extern "C" fn previous_comparison(
@@ -563,12 +698,7 @@ unsafe extern "C" fn previous_comparison(
         return;
     }
 
-    state
-        .global_timer
-        .timer
-        .write()
-        .unwrap()
-        .switch_to_previous_comparison();
+    drop(state.global_timer.timer.switch_to_previous_comparison());
 }
 
 unsafe extern "C" fn next_comparison(
@@ -586,12 +716,7 @@ unsafe extern "C" fn next_comparison(
         return;
     }
 
-    state
-        .global_timer
-        .timer
-        .write()
-        .unwrap()
-        .switch_to_next_comparison();
+    drop(state.global_timer.timer.switch_to_next_comparison());
 }
 
 unsafe extern "C" fn toggle_timing_method(
@@ -609,19 +734,13 @@ unsafe extern "C" fn toggle_timing_method(
         return;
     }
 
-    state
-        .global_timer
-        .timer
-        .write()
-        .unwrap()
-        .toggle_timing_method();
+    drop(state.global_timer.timer.toggle_timing_method());
 }
 
 unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
     let data = Box::into_raw(Box::new(Mutex::new(State::new(
         parse_settings(settings),
         source,
-        #[cfg(feature = "auto-splitting")]
         settings,
     ))))
     .cast();
@@ -755,7 +874,8 @@ unsafe extern "C" fn save_splits(
     data: *mut c_void,
 ) -> bool {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    save_splits_file(state)
+    state.global_timer.timer.save();
+    false
 }
 
 unsafe extern "C" fn use_game_arguments_modified(
@@ -901,7 +1021,7 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
         auto_splitter_info,
         auto_splitter_website,
         auto_splitter_activate,
-        state.global_timer.timer.read().unwrap().run().game_name(),
+        state.global_timer.timer.get_timer().run().game_name(),
     );
 
     true
@@ -930,7 +1050,7 @@ unsafe extern "C" fn splits_path_modified(
             info_text,
             website_button,
             activate_button,
-            state.global_timer.timer.read().unwrap().run().game_name(),
+            state.global_timer.timer.get_timer().run().game_name(),
         );
         auto_splitter_update_activation_label(activate_button, state);
     }
@@ -1023,7 +1143,7 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
     {
         if let Some(auto_splitter_path) = auto_splitters::get_downloader().download_for_game(
             auto_splitters::get_list(),
-            state.global_timer.timer.read().unwrap().run().game_name(),
+            state.global_timer.timer.get_timer().run().game_name(),
             auto_splitters::get_path(),
         ) {
             auto_splitter_load(&state.global_timer, auto_splitter_path);
@@ -1066,7 +1186,7 @@ unsafe extern "C" fn auto_splitter_open_website(
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let website = auto_splitters::get_list()
-        .get_website_for_game(state.global_timer.timer.read().unwrap().run().game_name());
+        .get_website_for_game(state.global_timer.timer.get_timer().run().game_name());
 
     match website {
         Some(website) => {
@@ -1088,7 +1208,7 @@ unsafe extern "C" fn auto_splitter_open_website(
 
 unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    let phase = state.global_timer.timer.read().unwrap().current_phase();
+    let phase = state.global_timer.timer.get_timer().current_phase();
     match phase {
         TimerPhase::NotRunning => OBS_MEDIA_STATE_STOPPED,
         TimerPhase::Running => OBS_MEDIA_STATE_PLAYING,
@@ -1099,22 +1219,22 @@ unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
 
 unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    let mut timer = state.global_timer.timer.write().unwrap();
-    match timer.current_phase() {
+    let phase = state.global_timer.timer.get_timer().current_phase();
+    match phase {
         TimerPhase::NotRunning => {
             if !pause {
-                timer.start()
+                drop(state.global_timer.timer.start());
             }
         }
         TimerPhase::Running => {
             if pause {
-                timer.pause()
+                drop(state.global_timer.timer.pause());
             }
         }
         TimerPhase::Ended => {}
         TimerPhase::Paused => {
             if !pause {
-                timer.resume()
+                drop(state.global_timer.timer.resume());
             }
         }
     }
@@ -1122,35 +1242,28 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
 
 unsafe extern "C" fn media_restart(data: *mut c_void) {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    if state.auto_save {
-        save_splits_file(state);
-    }
-    let mut timer = state.global_timer.timer.write().unwrap();
-    timer.reset(true);
-    timer.start();
+    drop(state.global_timer.timer.reset(None));
+    drop(state.global_timer.timer.start());
 }
 
 unsafe extern "C" fn media_stop(data: *mut c_void) {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    state.global_timer.timer.write().unwrap().reset(true);
-    if state.auto_save {
-        save_splits_file(state);
-    }
+    drop(state.global_timer.timer.reset(None));
 }
 
 unsafe extern "C" fn media_next(data: *mut c_void) {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    state.global_timer.timer.write().unwrap().split();
+    drop(state.global_timer.timer.split());
 }
 
 unsafe extern "C" fn media_previous(data: *mut c_void) {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    state.global_timer.timer.write().unwrap().undo_split();
+    drop(state.global_timer.timer.undo_split());
 }
 
 unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    let timer = state.global_timer.timer.read().unwrap();
+    let timer = state.global_timer.timer.get_timer();
     let time = timer.snapshot().current_time()[timer.current_timing_method()].unwrap_or_default();
     let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
     secs * 1000 + (nanos / 1_000_000) as i64
@@ -1158,7 +1271,7 @@ unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
 
 unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-    let timer = state.global_timer.timer.read().unwrap();
+    let timer = state.global_timer.timer.get_timer();
     let time = timer
         .run()
         .segments()
@@ -1194,6 +1307,8 @@ const SETTINGS_LAYOUT_PATH: *const c_char = cstr!(c"layout_path");
 const SETTINGS_SAVE_SPLITS: *const c_char = cstr!(c"save_splits");
 
 unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t {
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+
     let props = obs_properties_create();
     obs_properties_add_int(props, SETTINGS_WIDTH, cstr!(c"Width"), 10, 8200, 10);
     obs_properties_add_int(props, SETTINGS_HEIGHT, cstr!(c"Height"), 10, 8200, 10);
@@ -1205,6 +1320,15 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         OBS_PATH_FILE,
         cstr!(c"LiveSplit Splits (*.lss)"),
         ptr::null(),
+    );
+    obs_data_set_bool(
+        state.obs_settings,
+        SETTINGS_AUTO_SAVE,
+        state
+            .global_timer
+            .timer
+            .auto_save
+            .load(atomic::Ordering::Relaxed),
     );
     obs_properties_add_bool(
         props,
@@ -1269,8 +1393,6 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         ptr::null(),
         ptr::null(),
     );
-
-    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let uses_game_arguments = state.use_game_arguments;
     obs_property_set_visible(game_arguments, uses_game_arguments);
@@ -1343,7 +1465,7 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             info_text,
             website_button,
             activate_button,
-            state.global_timer.timer.read().unwrap().run().game_name(),
+            state.global_timer.timer.get_timer().run().game_name(),
         );
 
         let uses_local_auto_splitter = state.local_auto_splitter.is_some();
@@ -1585,7 +1707,11 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 
     state.game_path = settings.game_path;
 
-    state.auto_save = settings.auto_save;
+    state
+        .global_timer
+        .timer
+        .auto_save
+        .store(settings.auto_save, atomic::Ordering::Relaxed);
     state.layout = settings.layout;
 
     #[cfg(feature = "auto-splitting")]
@@ -1692,7 +1818,7 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
     timers.retain(|timer| timer.strong_count() > 0);
     if let Some(timer) = timers.iter().find_map(|timer| {
         let timer = timer.upgrade()?;
-        if timer.path == splits_path {
+        if timer.timer.path == splits_path {
             Some(timer)
         } else {
             None
@@ -1703,13 +1829,16 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
     } else {
         debug!("Storing timer for reuse.");
         let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
-        let timer = Timer::new(run).unwrap().into_shared();
+        let timer = Timer::new(run).unwrap();
         #[cfg(feature = "auto-splitting")]
         let auto_splitter = auto_splitting::Runtime::new();
         let global_timer = Arc::new(GlobalTimer {
-            path: splits_path,
-            can_save_splits,
-            timer,
+            timer: Arc::new(InnerTimer {
+                timer: RwLock::new(timer),
+                auto_save: AtomicBool::new(false),
+                path: splits_path,
+                can_save_splits,
+            }),
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
             #[cfg(feature = "auto-splitting")]
@@ -1795,6 +1924,10 @@ pub extern "C" fn obs_module_load() -> bool {
 
     let _ = log::set_logger(&ObsLog);
     log::set_max_level(LevelFilter::Debug);
+
+    std::panic::set_hook(Box::new(|info| {
+        error!("obs-livesplit-one crashed, please report this:\n{info}");
+    }));
 
     let source_info: &obs_source_info = &SOURCE_INFO.0;
 

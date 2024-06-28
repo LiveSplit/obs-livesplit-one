@@ -169,7 +169,6 @@ extern "C" {
         module: *mut obs_module_t,
         file: *const c_char,
     ) -> *const c_char;
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_data_set_bool(data: *mut obs_data_t, name: *const c_char, val: bool);
     #[cfg(feature = "auto-splitting")]
     pub fn obs_data_set_string(data: *mut obs_data_t, name: *const c_char, val: *const c_char);

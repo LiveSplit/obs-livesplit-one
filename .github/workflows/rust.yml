@@ -151,7 +151,8 @@ jobs:
           tar -xzf cross-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Build Shared Library
-        run: sh .github/workflows/build_shared.sh
+        shell: bash
+        run: .github/workflows/build_shared.sh
         env:
           TARGET: ${{ matrix.target }}
           SKIP_CROSS: ${{ matrix.cross }}
