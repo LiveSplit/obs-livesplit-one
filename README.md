@@ -9,8 +9,7 @@ Download the latest release for your operating system from the
 
 ### Windows
 
-- Extract the `obs-livesplit-one.dll` to `C:\Program Files
-(x86)\obs-studio\obs-plugins\64bit` or equivalent install directory.
+- Extract the `obs-livesplit-one.dll` to `C:\Program Files\obs-studio\obs-plugins\64bit` or equivalent install directory.
 
 ### Linux
 
