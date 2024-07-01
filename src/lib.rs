@@ -1919,6 +1919,13 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
                     .set_settings_map_if_unchanged(&original, map.clone())
                     != Some(false)
                 {
+                    state
+                        .global_timer
+                        .timer
+                        .timer
+                        .write()
+                        .unwrap()
+                        .run_auto_splitter_settings_map_store(map.clone());
                     state.auto_splitter_map = map;
                     break;
                 }
