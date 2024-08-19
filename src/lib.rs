@@ -626,6 +626,9 @@ unsafe extern "C" fn reset(
             return;
         }
 
+        // Update AutoSplitter Settings Map before reset-autosaving
+        #[cfg(feature = "auto-splitting")]
+        update_auto_splitter_settings_map(&state.global_timer);
         drop(state.global_timer.timer.reset(None));
     }
 }
@@ -920,6 +923,9 @@ unsafe extern "C" fn save_splits(
 ) -> bool {
     unsafe {
         let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+        // Update AutoSplitter Settings Map before saving
+        #[cfg(feature = "auto-splitting")]
+        update_auto_splitter_settings_map(&state.global_timer);
         state.global_timer.timer.save();
         false
     }
@@ -1180,6 +1186,17 @@ fn auto_splitter_load(global_timer: &GlobalTimer, path: PathBuf) {
         .store(enabled, atomic::Ordering::Relaxed);
 }
 
+/// Update AutoSplitter Settings Map, from the
+/// auto_splitting::Runtime to the Inner Timer Run,
+/// to prepare for it to be saved to a splits file
+#[cfg(feature = "auto-splitting")]
+fn update_auto_splitter_settings_map(global_timer: &GlobalTimer) -> Option<()> {
+    let m = global_timer.auto_splitter.settings_map()?;
+    let mut t = global_timer.timer.timer.write().ok()?;
+    t.run_auto_splitter_settings_map_store(m);
+    Some(())
+}
+
 #[cfg(feature = "auto-splitting")]
 unsafe extern "C" fn auto_splitter_activate_clicked(
     _props: *mut obs_properties_t,
@@ -1312,6 +1329,9 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
 unsafe extern "C" fn media_restart(data: *mut c_void) {
     unsafe {
         let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+        // Update AutoSplitter Settings Map before reset-autosaving
+        #[cfg(feature = "auto-splitting")]
+        update_auto_splitter_settings_map(&state.global_timer);
         drop(state.global_timer.timer.reset(None));
         drop(state.global_timer.timer.start());
     }
@@ -1320,6 +1340,9 @@ unsafe extern "C" fn media_restart(data: *mut c_void) {
 unsafe extern "C" fn media_stop(data: *mut c_void) {
     unsafe {
         let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+        // Update AutoSplitter Settings Map before reset-autosaving
+        #[cfg(feature = "auto-splitting")]
+        update_auto_splitter_settings_map(&state.global_timer);
         drop(state.global_timer.timer.reset(None));
     }
 }
