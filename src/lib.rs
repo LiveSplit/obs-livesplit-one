@@ -737,6 +737,42 @@ unsafe extern "C" fn toggle_timing_method(
     drop(state.global_timer.timer.toggle_timing_method());
 }
 
+unsafe extern "C" fn pause_game_time(
+    data: *mut c_void,
+    _: obs_hotkey_id,
+    _: *mut obs_hotkey_t,
+    pressed: bool,
+) {
+    if !pressed {
+        return;
+    }
+
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+    if !state.activated {
+        return;
+    }
+
+    drop(state.global_timer.timer.pause_game_time());
+}
+
+unsafe extern "C" fn resume_game_time(
+    data: *mut c_void,
+    _: obs_hotkey_id,
+    _: *mut obs_hotkey_t,
+    pressed: bool,
+) {
+    if !pressed {
+        return;
+    }
+
+    let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
+    if !state.activated {
+        return;
+    }
+
+    drop(state.global_timer.timer.resume_game_time());
+}
+
 unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
     let data = Box::into_raw(Box::new(Mutex::new(State::new(
         parse_settings(settings),
@@ -814,6 +850,22 @@ unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t
         cstr!(c"hotkey_toggle_timing_method"),
         cstr!(c"Toggle Timing Method"),
         Some(toggle_timing_method),
+        data,
+    );
+
+    obs_hotkey_register_source(
+        source,
+        cstr!(c"hotkey_pause_game_time"),
+        cstr!(c"Pause Game Time"),
+        Some(pause_game_time),
+        data,
+    );
+
+    obs_hotkey_register_source(
+        source,
+        cstr!(c"hotkey_resume_game_time"),
+        cstr!(c"Resume Game Time"),
+        Some(resume_game_time),
         data,
     );
 
