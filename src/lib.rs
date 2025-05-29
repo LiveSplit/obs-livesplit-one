@@ -88,12 +88,12 @@ static OBS_MODULE_POINTER: AtomicPtr<obs_module_t> = AtomicPtr::new(ptr::null_mu
 
 // This function is required for the OBS module registration to happen
 // It is essentially like calling OBS_DECLARE_MODULE() in C
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn obs_module_set_pointer(module: *mut obs_module_t) {
     OBS_MODULE_POINTER.store(module, atomic::Ordering::Relaxed);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn obs_module_ver() -> u32 {
     (26 << 24) | (1 << 16) | 1
 }
@@ -365,7 +365,7 @@ fn parse_layout(path: &CStr) -> Option<Layout> {
     layout::parser::parse(&file_data).ok()
 }
 
-unsafe fn get_game_environment_vars(settings: *mut obs_data_t) -> Vec<(String, String)> {
+unsafe fn get_game_environment_vars(settings: *mut obs_data_t) -> Vec<(String, String)> { unsafe {
     let environment_list = obs_data_get_array(settings, SETTINGS_GAME_ENVIRONMENT_LIST);
     let count = obs_data_array_count(environment_list);
 
@@ -400,9 +400,9 @@ unsafe fn get_game_environment_vars(settings: *mut obs_data_t) -> Vec<(String, S
     obs_data_array_release(environment_list);
 
     vars
-}
+}}
 
-unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
+unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings { unsafe {
     #[cfg(feature = "auto-splitting")]
     let local_auto_splitter = {
         let uses_local_auto_splitter = obs_data_get_bool(settings, SETTINGS_LOCAL_AUTO_SPLITTER);
@@ -459,7 +459,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
         width,
         height,
     }
-}
+}}
 
 impl State {
     unsafe fn new(
@@ -479,7 +479,7 @@ impl State {
         }: Settings,
         _source: *mut obs_source_t,
         obs_settings: *mut obs_data_t,
-    ) -> Self {
+    ) -> Self { unsafe {
         debug!("Loading settings.");
 
         let global_timer = get_global_timer(splits_path);
@@ -525,9 +525,9 @@ impl State {
             #[cfg(feature = "auto-splitting")]
             source: _source,
         }
-    }
+    }}
 
-    unsafe fn render(&mut self) {
+    unsafe fn render(&mut self) { unsafe {
         self.layout.update_state(
             &mut self.state,
             &mut self.image_cache,
@@ -569,7 +569,7 @@ impl State {
                 obs_source_update_properties(self.source);
             }
         }
-    }
+    }}
 }
 
 unsafe extern "C" fn get_name(_: *mut c_void) -> *const c_char {
@@ -581,7 +581,7 @@ unsafe extern "C" fn split(
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -592,14 +592,14 @@ unsafe extern "C" fn split(
     }
 
     drop(state.global_timer.timer.split_or_start());
-}
+}}
 
 unsafe extern "C" fn reset(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -610,14 +610,14 @@ unsafe extern "C" fn reset(
     }
 
     drop(state.global_timer.timer.reset(None));
-}
+}}
 
 unsafe extern "C" fn undo(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -628,14 +628,14 @@ unsafe extern "C" fn undo(
     }
 
     drop(state.global_timer.timer.undo_split());
-}
+}}
 
 unsafe extern "C" fn skip(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -646,14 +646,14 @@ unsafe extern "C" fn skip(
     }
 
     drop(state.global_timer.timer.skip_split());
-}
+}}
 
 unsafe extern "C" fn pause(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -664,14 +664,14 @@ unsafe extern "C" fn pause(
     }
 
     drop(state.global_timer.timer.toggle_pause_or_start());
-}
+}}
 
 unsafe extern "C" fn undo_all_pauses(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -682,14 +682,14 @@ unsafe extern "C" fn undo_all_pauses(
     }
 
     drop(state.global_timer.timer.undo_all_pauses());
-}
+}}
 
 unsafe extern "C" fn previous_comparison(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -700,14 +700,14 @@ unsafe extern "C" fn previous_comparison(
     }
 
     drop(state.global_timer.timer.switch_to_previous_comparison());
-}
+}}
 
 unsafe extern "C" fn next_comparison(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -718,14 +718,14 @@ unsafe extern "C" fn next_comparison(
     }
 
     drop(state.global_timer.timer.switch_to_next_comparison());
-}
+}}
 
 unsafe extern "C" fn toggle_timing_method(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
-) {
+) { unsafe {
     if !pressed {
         return;
     }
@@ -736,9 +736,9 @@ unsafe extern "C" fn toggle_timing_method(
     }
 
     drop(state.global_timer.timer.toggle_timing_method());
-}
+}}
 
-unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void {
+unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t) -> *mut c_void { unsafe {
     let data = Box::into_raw(Box::new(Mutex::new(State::new(
         parse_settings(settings),
         source,
@@ -819,23 +819,23 @@ unsafe extern "C" fn create(settings: *mut obs_data_t, source: *mut obs_source_t
     );
 
     data
-}
+}}
 
-unsafe extern "C" fn destroy(data: *mut c_void) {
+unsafe extern "C" fn destroy(data: *mut c_void) { unsafe {
     drop(Box::<Mutex<State>>::from_raw(data.cast()));
-}
+}}
 
-unsafe extern "C" fn get_width(data: *mut c_void) -> u32 {
+unsafe extern "C" fn get_width(data: *mut c_void) -> u32 { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.width
-}
+}}
 
-unsafe extern "C" fn get_height(data: *mut c_void) -> u32 {
+unsafe extern "C" fn get_height(data: *mut c_void) -> u32 { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.height
-}
+}}
 
-unsafe extern "C" fn video_render(data: *mut c_void, _: *mut gs_effect_t) {
+unsafe extern "C" fn video_render(data: *mut c_void, _: *mut gs_effect_t) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.render();
 
@@ -853,38 +853,38 @@ unsafe extern "C" fn video_render(data: *mut c_void, _: *mut gs_effect_t) {
 
     gs_technique_end_pass(tech);
     gs_technique_end(tech);
-}
+}}
 
 unsafe extern "C" fn mouse_wheel(
     data: *mut c_void,
     _: *const obs_mouse_event,
     _: c_int,
     y_delta: c_int,
-) {
+) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     match y_delta.cmp(&0) {
         Ordering::Less => state.layout.scroll_down(),
         Ordering::Equal => {}
         Ordering::Greater => state.layout.scroll_up(),
     }
-}
+}}
 
 unsafe extern "C" fn save_splits(
     _: *mut obs_properties_t,
     _: *mut obs_property_t,
     data: *mut c_void,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.global_timer.timer.save();
     false
-}
+}}
 
 unsafe extern "C" fn use_game_arguments_modified(
     data: *mut c_void,
     props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     settings: *mut obs_data_t,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let use_game_arguments = obs_data_get_bool(settings, SETTINGS_USE_GAME_ARGUMENTS);
@@ -903,13 +903,13 @@ unsafe extern "C" fn use_game_arguments_modified(
     obs_property_set_visible(game_env_list, use_game_arguments);
 
     true
-}
+}}
 
 unsafe extern "C" fn start_game_clicked(
     _props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     data: *mut c_void,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     if !state.game_path.exists() {
@@ -986,7 +986,7 @@ unsafe extern "C" fn start_game_clicked(
     }
 
     false
-}
+}}
 
 #[cfg(feature = "auto-splitting")]
 unsafe extern "C" fn use_local_auto_splitter_modified(
@@ -994,7 +994,7 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
     props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     settings: *mut obs_data_t,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let use_local_auto_splitter = obs_data_get_bool(settings, SETTINGS_LOCAL_AUTO_SPLITTER);
@@ -1026,14 +1026,14 @@ unsafe extern "C" fn use_local_auto_splitter_modified(
     );
 
     true
-}
+}}
 
 unsafe extern "C" fn splits_path_modified(
     data: *mut c_void,
     _props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     settings: *mut obs_data_t,
-) -> bool {
+) -> bool { unsafe {
     let splits_path = CStr::from_ptr(obs_data_get_string(settings, SETTINGS_SPLITS_PATH).cast());
     let splits_path = PathBuf::from(splits_path.to_string_lossy().into_owned());
 
@@ -1057,7 +1057,7 @@ unsafe extern "C" fn splits_path_modified(
     }
 
     true
-}
+}}
 
 #[cfg(feature = "auto-splitting")]
 unsafe fn update_auto_splitter_ui(
@@ -1065,7 +1065,7 @@ unsafe fn update_auto_splitter_ui(
     website_button: *mut obs_property_t,
     activate_button: *mut obs_property_t,
     game_name: &str,
-) {
+) { unsafe {
     if let Some(auto_splitter) = auto_splitters::get_list().get_for_game(game_name) {
         obs_property_set_enabled(website_button, auto_splitter.website.is_some());
 
@@ -1094,7 +1094,7 @@ unsafe fn update_auto_splitter_ui(
             cstr!(c"No auto splitter available for this game."),
         );
     }
-}
+}}
 
 #[cfg(feature = "auto-splitting")]
 fn auto_splitter_unload(global_timer: &GlobalTimer) {
@@ -1107,15 +1107,15 @@ fn auto_splitter_unload(global_timer: &GlobalTimer) {
 
 #[cfg(feature = "auto-splitting")]
 fn auto_splitter_load(global_timer: &GlobalTimer, path: PathBuf) {
-    let enabled = if let Err(e) = global_timer
+    let enabled = match global_timer
         .auto_splitter
         .load(path, global_timer.timer.clone())
-    {
+    { Err(e) => {
         warn!("Auto Splitter could not be loaded: {e}");
         false
-    } else {
+    } _ => {
         true
-    };
+    }};
 
     global_timer
         .auto_splitter_is_enabled
@@ -1127,7 +1127,7 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
     _props: *mut obs_properties_t,
     prop: *mut obs_property_t,
     data: *mut c_void,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     state
@@ -1156,13 +1156,13 @@ unsafe extern "C" fn auto_splitter_activate_clicked(
     }
 
     true
-}
+}}
 
 #[cfg(feature = "auto-splitting")]
 unsafe fn auto_splitter_update_activation_label(
     activate_button_prop: *mut obs_property_t,
     state: &mut State,
-) {
+) { unsafe {
     let is_active = state
         .global_timer
         .auto_splitter_is_enabled
@@ -1176,14 +1176,14 @@ unsafe fn auto_splitter_update_activation_label(
             cstr!(c"Deactivate")
         },
     );
-}
+}}
 
 #[cfg(feature = "auto-splitting")]
 unsafe extern "C" fn auto_splitter_open_website(
     _props: *mut obs_properties_t,
     _prop: *mut obs_property_t,
     data: *mut c_void,
-) -> bool {
+) -> bool { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let website = auto_splitters::get_list()
@@ -1205,9 +1205,9 @@ unsafe extern "C" fn auto_splitter_open_website(
     }
 
     false
-}
+}}
 
-unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
+unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let phase = state.global_timer.timer.get_timer().current_phase();
     match phase {
@@ -1216,9 +1216,9 @@ unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
         TimerPhase::Ended => OBS_MEDIA_STATE_ENDED,
         TimerPhase::Paused => OBS_MEDIA_STATE_PAUSED,
     }
-}
+}}
 
-unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
+unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let phase = state.global_timer.timer.get_timer().current_phase();
     match phase {
@@ -1239,38 +1239,38 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
             }
         }
     }
-}
+}}
 
-unsafe extern "C" fn media_restart(data: *mut c_void) {
+unsafe extern "C" fn media_restart(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     drop(state.global_timer.timer.reset(None));
     drop(state.global_timer.timer.start());
-}
+}}
 
-unsafe extern "C" fn media_stop(data: *mut c_void) {
+unsafe extern "C" fn media_stop(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     drop(state.global_timer.timer.reset(None));
-}
+}}
 
-unsafe extern "C" fn media_next(data: *mut c_void) {
+unsafe extern "C" fn media_next(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     drop(state.global_timer.timer.split());
-}
+}}
 
-unsafe extern "C" fn media_previous(data: *mut c_void) {
+unsafe extern "C" fn media_previous(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     drop(state.global_timer.timer.undo_split());
-}
+}}
 
-unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
+unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let timer = state.global_timer.timer.get_timer();
     let time = timer.snapshot().current_time()[timer.current_timing_method()].unwrap_or_default();
     let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
     secs * 1000 + (nanos / 1_000_000) as i64
-}
+}}
 
-unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
+unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     let timer = state.global_timer.timer.get_timer();
     let time = timer
@@ -1282,7 +1282,7 @@ unsafe extern "C" fn media_get_duration(data: *mut c_void) -> i64 {
     .unwrap_or_default();
     let (secs, nanos) = time.to_seconds_and_subsec_nanoseconds();
     secs * 1000 + (nanos / 1_000_000) as i64
-}
+}}
 
 const SETTINGS_WIDTH: *const c_char = cstr!(c"width");
 const SETTINGS_HEIGHT: *const c_char = cstr!(c"height");
@@ -1307,7 +1307,7 @@ const SETTINGS_AUTO_SPLITTER_WEBSITE: *const c_char = cstr!(c"auto_splitter_webs
 const SETTINGS_LAYOUT_PATH: *const c_char = cstr!(c"layout_path");
 const SETTINGS_SAVE_SPLITS: *const c_char = cstr!(c"save_splits");
 
-unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t {
+unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let props = obs_properties_create();
@@ -1638,22 +1638,22 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
                             obs_property_set_long_description(property, tooltip.as_ptr());
                         }
 
-                        if let Some(value) = state
+                        match state
                             .auto_splitter_map
                             .get(&widget.key)
                             .and_then(|v| v.as_string())
                             .and_then(|s| wasi_path::to_native(s, true))
                             .filter(|p| p.exists())
                             .and_then(|p| CString::new(p.as_os_str().as_encoded_bytes()).ok())
-                        {
+                        { Some(value) => {
                             obs_data_set_string(
                                 state.obs_settings,
                                 setting_key.as_ptr(),
                                 value.as_ptr(),
                             );
-                        } else {
+                        } _ => {
                             obs_data_erase(state.obs_settings, setting_key.as_ptr());
-                        }
+                        }}
                     }
                 }
             }
@@ -1669,23 +1669,23 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
     }
 
     props
-}
+}}
 
-unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
+unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) { unsafe {
     obs_data_set_default_int(settings, SETTINGS_WIDTH, 300);
     obs_data_set_default_int(settings, SETTINGS_HEIGHT, 500);
     obs_data_set_default_bool(settings, SETTINGS_AUTO_SAVE, false);
-}
+}}
 
-unsafe extern "C" fn activate(data: *mut c_void) {
+unsafe extern "C" fn activate(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.activated = true;
-}
+}}
 
-unsafe extern "C" fn deactivate(data: *mut c_void) {
+unsafe extern "C" fn deactivate(data: *mut c_void) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
     state.activated = false;
-}
+}}
 
 fn default_run() -> (Run, bool) {
     let mut run = Run::new();
@@ -1693,7 +1693,7 @@ fn default_run() -> (Run, bool) {
     (run, false)
 }
 
-unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
+unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) { unsafe {
     let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
     let settings = parse_settings(settings_obj);
@@ -1808,7 +1808,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
         gs_texture_destroy(texture);
         obs_leave_graphics();
     }
-}
+}}
 
 fn handle_splits_path_change(state: &mut State, splits_path: PathBuf) {
     state.global_timer = get_global_timer(splits_path);
@@ -1817,17 +1817,17 @@ fn handle_splits_path_change(state: &mut State, splits_path: PathBuf) {
 fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
     let mut timers = TIMERS.lock().unwrap();
     timers.retain(|timer| timer.strong_count() > 0);
-    if let Some(timer) = timers.iter().find_map(|timer| {
+    match timers.iter().find_map(|timer| {
         let timer = timer.upgrade()?;
         if timer.timer.path == splits_path {
             Some(timer)
         } else {
             None
         }
-    }) {
+    }) { Some(timer) => {
         debug!("Found timer to reuse.");
         timer
-    } else {
+    } _ => {
         debug!("Storing timer for reuse.");
         let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
         let timer = Timer::new(run).unwrap();
@@ -1847,7 +1847,7 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
         });
         timers.push(Arc::downgrade(&global_timer));
         global_timer
-    }
+    }}
 }
 
 struct ObsLog;
@@ -1866,7 +1866,7 @@ impl Log for ObsLog {
     fn flush(&self) {}
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn obs_module_load() -> bool {
     static SOURCE_INFO: UnsafeMultiThread<obs_source_info> = UnsafeMultiThread(obs_source_info {
         id: cstr!(c"livesplit-one"),

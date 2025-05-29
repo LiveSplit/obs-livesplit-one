@@ -26,7 +26,7 @@ pub use crate::ffi_types::*;
     not(any(target_os = "macos", windows)),
     link(name = "obs", kind = "dylib")
 )]
-extern "C" {
+unsafe extern "C" {
     pub fn obs_register_source_s(info: *const obs_source_info, size: size_t);
     pub fn gs_texture_create(
         width: u32,
