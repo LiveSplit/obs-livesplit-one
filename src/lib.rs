@@ -1,5 +1,6 @@
 use core::fmt;
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     ffi::{c_void, CStr},
     fs::{self, File},
@@ -220,14 +221,14 @@ impl CommandSink for InnerTimer {
 
     fn set_custom_variable(
         &self,
-        name: &str,
-        value: &str,
+        name: Cow<'_, str>,
+        value: Cow<'_, str>
     ) -> impl Future<Output = Result> + 'static {
         self.timer.write().unwrap().set_custom_variable(name, value);
         async { Ok(Event::CustomVariableSet) }
     }
 
-    fn set_current_comparison(&self, comparison: &str) -> impl Future<Output = Result> + 'static {
+    fn set_current_comparison(&self, comparison: Cow<'_, str>) -> impl Future<Output = Result> + 'static {
         let result = self
             .timer
             .write()
