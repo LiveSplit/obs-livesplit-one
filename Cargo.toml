@@ -27,7 +27,7 @@ serde_json = "1.0.105"
 anyhow = { version = "1.0.75", optional = true }
 open = { version = "5.0.0", optional = true }
 percent-encoding = { version = "2.3.0", optional = true }
-quick-xml = { version = "0.34.0", features = [
+quick-xml = { version = "0.38.3", features = [
     "serialize",
     "overlapped-lists",
 ], optional = true }
