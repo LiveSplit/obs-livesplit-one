@@ -187,7 +187,7 @@ impl Downloader {
 
         let file_name = url
             .path_segments()
-            .and_then(|s| s.last())
+            .and_then(|mut s| s.next_back())
             .context("There is no file name in the URL.")?;
 
         let file_name = percent_encoding::percent_decode_str(file_name).decode_utf8_lossy();
