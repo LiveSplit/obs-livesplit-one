@@ -14,7 +14,7 @@ members = ["obs"]
 crate-type = ["cdylib"]
 
 [dependencies]
-livesplit-core = { git = "https://github.com/LiveSplit/livesplit-core", features = [
+livesplit-core = { git = "https://github.com/AlexKnauth/livesplit-core", branch = "Refragg-2", features = [
     "software-rendering",
     "font-loading",
 ] }

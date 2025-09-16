@@ -1465,7 +1465,7 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 [[package]]
 name = "livesplit-auto-splitting"
 version = "0.1.0"
-source = "git+https://github.com/LiveSplit/livesplit-core#7649ba092a0e0723c4dbafe600778ddac78ede4d"
+source = "git+https://github.com/AlexKnauth/livesplit-core?branch=Refragg-2#652d2b481a627e5c0d971b6646fc78aacdb650e6"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1489,7 +1489,7 @@ dependencies = [
 [[package]]
 name = "livesplit-core"
 version = "0.13.0"
-source = "git+https://github.com/LiveSplit/livesplit-core#7649ba092a0e0723c4dbafe600778ddac78ede4d"
+source = "git+https://github.com/AlexKnauth/livesplit-core?branch=Refragg-2#652d2b481a627e5c0d971b6646fc78aacdb650e6"
 dependencies = [
  "arc-swap",
  "base64-simd",
@@ -1525,7 +1525,7 @@ dependencies = [
 [[package]]
 name = "livesplit-hotkey"
 version = "0.8.0"
-source = "git+https://github.com/LiveSplit/livesplit-core#7649ba092a0e0723c4dbafe600778ddac78ede4d"
+source = "git+https://github.com/AlexKnauth/livesplit-core?branch=Refragg-2#652d2b481a627e5c0d971b6646fc78aacdb650e6"
 dependencies = [
  "bitflags 2.9.3",
  "cfg-if",
@@ -1542,7 +1542,7 @@ dependencies = [
 [[package]]
 name = "livesplit-title-abbreviations"
 version = "0.3.0"
-source = "git+https://github.com/LiveSplit/livesplit-core#7649ba092a0e0723c4dbafe600778ddac78ede4d"
+source = "git+https://github.com/AlexKnauth/livesplit-core?branch=Refragg-2#652d2b481a627e5c0d971b6646fc78aacdb650e6"
 
 [[package]]
 name = "log"
