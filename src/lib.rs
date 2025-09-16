@@ -493,7 +493,11 @@ impl State {
         unsafe {
             debug!("Loading settings.");
 
-            let global_timer = get_global_timer(splits_path);
+            let global_timer = get_global_timer(
+                splits_path,
+                #[cfg(feature = "auto-splitting")]
+                &local_auto_splitter,
+            );
             global_timer
                 .timer
                 .auto_save
@@ -505,11 +509,6 @@ impl State {
             obs_enter_graphics();
             let texture = gs_texture_create(width, height, GS_RGBA, 1, ptr::null_mut(), GS_DYNAMIC);
             obs_leave_graphics();
-
-            #[cfg(feature = "auto-splitting")]
-            if let Some(local_auto_splitter) = &local_auto_splitter {
-                auto_splitter_load(&global_timer, local_auto_splitter.clone())
-            }
 
             Self {
                 #[cfg(feature = "auto-splitting")]
@@ -1838,23 +1837,62 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
                     match &widget.kind {
                         WidgetKind::Title { .. } => {}
                         WidgetKind::Bool { default_value } => {
-                            let value = obs_data_get_bool(settings_obj, data_key.as_ptr());
-                            if value != *default_value {
-                                map.insert(key.clone(), Value::Bool(value));
+                            let old_value = state
+                                .auto_splitter_map
+                                .get(&key)
+                                .and_then(|v| v.to_bool())
+                                .unwrap_or(*default_value);
+                            let asr_value = map
+                                .get(&key)
+                                .and_then(|v| v.to_bool())
+                                .unwrap_or(*default_value);
+                            if asr_value != old_value {
+                                obs_data_set_bool(settings_obj, data_key.as_ptr(), asr_value);
+                                state
+                                    .auto_splitter_map
+                                    .insert(key.clone(), Value::Bool(asr_value));
                             } else {
                                 map.remove(key);
+                                let obs_value = obs_data_get_bool(settings_obj, data_key.as_ptr());
+                                if obs_value != *default_value {
+                                    map.insert(key.clone(), Value::Bool(obs_value));
+                                } else {
+                                    map.remove(key);
+                                }
                             }
                         }
                         WidgetKind::Choice {
                             default_option_key, ..
                         } => {
-                            if let Some(value) =
+                            let old_value = state
+                                .auto_splitter_map
+                                .get(&key)
+                                .and_then(|v| v.as_string())
+                                .unwrap_or(default_option_key);
+                            let asr_value = map
+                                .get(&key)
+                                .and_then(|v| v.as_string())
+                                .unwrap_or(default_option_key);
+                            if asr_value != old_value {
+                                if let Ok(new_value) =
+                                    CString::from_vec_with_nul(format!("{}\0", asr_value).into())
+                                {
+                                    obs_data_set_string(
+                                        settings_obj,
+                                        data_key.as_ptr(),
+                                        new_value.as_ptr(),
+                                    );
+                                }
+                                state
+                                    .auto_splitter_map
+                                    .insert(key.clone(), Value::String(asr_value.clone()));
+                            } else if let Some(obs_value) =
                                 CStr::from_ptr(obs_data_get_string(settings_obj, data_key.as_ptr()))
                                     .to_str()
                                     .ok()
                                     .filter(|v| *v != &**default_option_key)
                             {
-                                map.insert(key.clone(), Value::String(Arc::from(value)));
+                                map.insert(key.clone(), Value::String(Arc::from(obs_value)));
                             } else {
                                 map.remove(key);
                             }
@@ -1908,10 +1946,17 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 }
 
 fn handle_splits_path_change(state: &mut State, splits_path: PathBuf) {
-    state.global_timer = get_global_timer(splits_path);
+    state.global_timer = get_global_timer(
+        splits_path,
+        #[cfg(feature = "auto-splitting")]
+        &state.local_auto_splitter,
+    );
 }
 
-fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
+fn get_global_timer(
+    splits_path: PathBuf,
+    #[cfg(feature = "auto-splitting")] local_auto_splitter: &Option<PathBuf>,
+) -> Arc<GlobalTimer> {
     let mut timers = TIMERS.lock().unwrap();
     timers.retain(|timer| timer.strong_count() > 0);
     if let Some(timer) = timers.iter().find_map(|timer| {
@@ -1942,6 +1987,10 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
             #[cfg(feature = "auto-splitting")]
             auto_splitter_is_enabled: AtomicBool::new(false),
         });
+        #[cfg(feature = "auto-splitting")]
+        if let Some(local_auto_splitter) = local_auto_splitter {
+            auto_splitter_load(&global_timer, local_auto_splitter.clone());
+        }
         timers.push(Arc::downgrade(&global_timer));
         global_timer
     }
