@@ -368,3 +368,8 @@ pub extern "C" fn obs_data_get_json(_data: *mut obs_data_t) -> *const c_char {
 pub extern "C" fn obs_source_update_properties(_source: *mut obs_source_t) {
     panic!()
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn obs_get_locale() -> *const c_char {
+    panic!()
+}
