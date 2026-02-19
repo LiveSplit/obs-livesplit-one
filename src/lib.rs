@@ -30,12 +30,13 @@ use ffi::{
     obs_data_set_default_bool, obs_data_set_default_int, obs_data_t, obs_enter_graphics,
     obs_get_base_effect, obs_hotkey_id, obs_hotkey_register_source, obs_hotkey_t,
     obs_leave_graphics, obs_mouse_event, obs_properties_add_bool, obs_properties_add_button,
-    obs_properties_add_editable_list, obs_properties_add_int, obs_properties_add_path,
-    obs_properties_add_text, obs_properties_create, obs_properties_get,
-    obs_property_set_modified_callback2, obs_property_set_visible, obs_property_t,
-    obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA, LOG_WARNING,
-    OBS_EDITABLE_LIST_TYPE_STRINGS, OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE,
-    OBS_PATH_FILE, OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
+    obs_properties_add_editable_list, obs_properties_add_int, obs_properties_add_list,
+    obs_properties_add_path, obs_properties_add_text, obs_properties_create, obs_properties_get,
+    obs_property_list_add_string, obs_property_set_modified_callback2, obs_property_set_visible,
+    obs_property_t, obs_register_source_s, obs_source_info, obs_source_t, GS_DYNAMIC, GS_RGBA,
+    LOG_WARNING, OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_EDITABLE_LIST_TYPE_STRINGS,
+    OBS_EFFECT_PREMULTIPLIED_ALPHA, OBS_ICON_TYPE_GAME_CAPTURE, OBS_PATH_FILE,
+    OBS_SOURCE_CONTROLLABLE_MEDIA, OBS_SOURCE_CUSTOM_DRAW, OBS_SOURCE_INTERACTION,
     OBS_SOURCE_TYPE_INPUT, OBS_SOURCE_VIDEO,
 };
 use ffi_types::{
@@ -65,9 +66,8 @@ use crate::localization::{lang, Text};
 use {
     self::ffi::{
         obs_data_erase, obs_data_set_default_string, obs_data_set_string, obs_properties_add_group,
-        obs_properties_add_list, obs_property_list_add_string, obs_property_set_description,
-        obs_property_set_enabled, obs_property_set_long_description, obs_source_update_properties,
-        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_GROUP_NORMAL, OBS_TEXT_INFO,
+        obs_property_set_description, obs_property_set_enabled, obs_property_set_long_description,
+        obs_source_update_properties, OBS_GROUP_NORMAL, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting::{
         self,
@@ -283,6 +283,7 @@ struct State {
     game_working_directory: Option<PathBuf>,
     game_environment_vars: Vec<(String, String)>,
     game_path: PathBuf,
+    timing_method: TimingMethod,
     global_timer: Arc<GlobalTimer>,
     layout: Layout,
     state: LayoutState,
@@ -319,6 +320,7 @@ struct Settings {
     game_working_directory: Option<PathBuf>,
     game_environment_vars: Vec<(String, String)>,
     game_path: PathBuf,
+    timing_method: TimingMethod,
     splits_path: PathBuf,
     auto_save: bool,
     layout: Layout,
@@ -457,6 +459,14 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
         let width = obs_data_get_int(settings, SETTINGS_WIDTH) as u32;
         let height = obs_data_get_int(settings, SETTINGS_HEIGHT) as u32;
 
+        let timing_method_string =
+            CStr::from_ptr(obs_data_get_string(settings, SETTINGS_TIMING_METHOD));
+        let timing_method = if timing_method_string == CStr::from_ptr(SETTINGS_VALUE_GAME_TIME) {
+            TimingMethod::GameTime
+        } else {
+            TimingMethod::RealTime
+        };
+
         Settings {
             #[cfg(feature = "auto-splitting")]
             local_auto_splitter,
@@ -465,6 +475,7 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
             game_working_directory,
             game_environment_vars,
             game_path,
+            timing_method,
             splits_path,
             auto_save,
             layout,
@@ -484,6 +495,7 @@ impl State {
             game_working_directory,
             game_environment_vars,
             game_path,
+            timing_method,
             splits_path,
             auto_save,
             layout,
@@ -496,7 +508,7 @@ impl State {
         unsafe {
             debug!("Loading settings.");
 
-            let global_timer = get_global_timer(splits_path);
+            let global_timer = get_global_timer(splits_path, timing_method);
             global_timer
                 .timer
                 .auto_save
@@ -522,6 +534,7 @@ impl State {
                 game_working_directory,
                 game_environment_vars,
                 game_path,
+                timing_method,
                 global_timer,
                 layout,
                 state,
@@ -1381,6 +1394,9 @@ const SETTINGS_GAME_PATH: *const c_char = cstr!(c"game_path");
 const SETTINGS_GAME_ARGUMENTS: *const c_char = cstr!(c"game_arguments");
 const SETTINGS_GAME_WORKING_DIRECTORY: *const c_char = cstr!(c"game_working_directory");
 const SETTINGS_GAME_ENVIRONMENT_LIST: *const c_char = cstr!(c"game_environment_list");
+const SETTINGS_TIMING_METHOD: *const c_char = cstr!(c"timing_method");
+const SETTINGS_VALUE_REAL_TIME: *const c_char = cstr!(c"realtime");
+const SETTINGS_VALUE_GAME_TIME: *const c_char = cstr!(c"gametime");
 const SETTINGS_START_GAME: *const c_char = cstr!(c"start_game");
 const SETTINGS_SPLITS_PATH: *const c_char = cstr!(c"splits_path");
 const SETTINGS_AUTO_SAVE: *const c_char = cstr!(c"auto_save");
@@ -1457,6 +1473,16 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
             Text::PropertyLayoutFilter.resolve(lang),
             ptr::null(),
         );
+
+        let list = obs_properties_add_list(
+            props,
+            SETTINGS_TIMING_METHOD,
+            cstr!(c"Timing Method"),
+            OBS_COMBO_TYPE_LIST,
+            OBS_COMBO_FORMAT_STRING,
+        );
+        obs_property_list_add_string(list, cstr!(c"Real Time"), SETTINGS_VALUE_REAL_TIME);
+        obs_property_list_add_string(list, cstr!(c"Game Time"), SETTINGS_VALUE_GAME_TIME);
 
         let use_game_arguments = obs_properties_add_bool(
             props,
@@ -1826,6 +1852,16 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 
         state.game_path = settings.game_path;
 
+        if state.timing_method != settings.timing_method {
+            state.timing_method = settings.timing_method;
+            drop(
+                state
+                    .global_timer
+                    .timer
+                    .set_current_timing_method(state.timing_method),
+            );
+        }
+
         state
             .global_timer
             .timer
@@ -1931,10 +1967,10 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 }
 
 fn handle_splits_path_change(state: &mut State, splits_path: PathBuf) {
-    state.global_timer = get_global_timer(splits_path);
+    state.global_timer = get_global_timer(splits_path, state.timing_method);
 }
 
-fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
+fn get_global_timer(splits_path: PathBuf, timing_method: TimingMethod) -> Arc<GlobalTimer> {
     let mut timers = TIMERS.lock().unwrap();
     timers.retain(|timer| timer.strong_count() > 0);
     if let Some(timer) = timers.iter().find_map(|timer| {
@@ -1950,7 +1986,8 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
     } else {
         debug!("Storing timer for reuse.");
         let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
-        let timer = Timer::new(run).unwrap();
+        let mut timer = Timer::new(run).unwrap();
+        timer.set_current_timing_method(timing_method);
         #[cfg(feature = "auto-splitting")]
         let auto_splitter = auto_splitting::Runtime::new();
         let global_timer = Arc::new(GlobalTimer {
