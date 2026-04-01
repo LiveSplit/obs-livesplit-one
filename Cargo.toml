@@ -41,6 +41,7 @@ mime_guess = "2.0.4"
 time = { version = "0.3.47", features = [
     "formatting",
 ], default-features = false, optional = true }
+tokio = { version = "1.0", default-features = false, features = ["net", "time"] }
 
 [target.'cfg(not(any(target_os = "macos", windows)))'.dependencies]
 obs = { path = "obs" }
@@ -62,6 +63,7 @@ therun-gg = [
     "livesplit-core/therun-gg",
     "dep:reqwest",
     "dep:time",
+    "tokio/rt-multi-thread",
 ]
 
 [profile.max-opt]
