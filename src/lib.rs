@@ -41,7 +41,7 @@ use ffi::{
 use ffi_types::{
     obs_media_state, obs_module_t, obs_properties_t, LOG_DEBUG, LOG_ERROR, LOG_INFO,
     OBS_MEDIA_STATE_ENDED, OBS_MEDIA_STATE_PAUSED, OBS_MEDIA_STATE_PLAYING,
-    OBS_MEDIA_STATE_STOPPED, OBS_PATH_DIRECTORY, OBS_TEXT_DEFAULT,
+    OBS_MEDIA_STATE_STOPPED, OBS_PATH_DIRECTORY, OBS_TEXT_DEFAULT, OBS_TEXT_PASSWORD,
 };
 
 use livesplit_core::{
@@ -64,16 +64,20 @@ use crate::localization::{lang, Text};
 #[cfg(feature = "auto-splitting")]
 use {
     self::ffi::{
-        obs_data_erase, obs_data_set_default_string, obs_data_set_string, obs_properties_add_group,
-        obs_properties_add_list, obs_property_list_add_string, obs_property_set_description,
-        obs_property_set_enabled, obs_property_set_long_description, obs_source_update_properties,
-        OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_GROUP_NORMAL, OBS_TEXT_INFO,
+        obs_data_erase, obs_data_set_string, obs_properties_add_list, obs_property_list_add_string,
+        obs_property_set_description, obs_property_set_enabled, obs_property_set_long_description,
+        obs_source_update_properties, OBS_COMBO_FORMAT_STRING, OBS_COMBO_TYPE_LIST, OBS_TEXT_INFO,
     },
     livesplit_core::auto_splitting::{
         self,
         settings::{self, FileFilter, Value, Widget, WidgetKind},
         wasi_path,
     },
+};
+
+#[cfg(any(feature = "auto-splitting", feature = "therun-gg"))]
+use {
+    self::ffi::{obs_data_set_default_string, obs_properties_add_group, OBS_GROUP_NORMAL},
     std::ffi::CString,
 };
 
@@ -369,6 +373,12 @@ struct State {
     auto_splitter_map: settings::Map,
     #[cfg(feature = "auto-splitting")]
     source: *mut obs_source_t,
+    #[cfg(feature = "therun-gg")]
+    therun_api_key: String,
+    #[cfg(feature = "therun-gg")]
+    therun_live_tracking: bool,
+    #[cfg(feature = "therun-gg")]
+    therun_stats_uploading: bool,
 }
 
 impl Drop for State {
@@ -394,6 +404,12 @@ struct Settings {
     layout: Layout,
     width: u32,
     height: u32,
+    #[cfg(feature = "therun-gg")]
+    therun_api_key: String,
+    #[cfg(feature = "therun-gg")]
+    therun_live_tracking: bool,
+    #[cfg(feature = "therun-gg")]
+    therun_stats_uploading: bool,
 }
 
 #[derive(Deserialize)]
@@ -527,6 +543,16 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
         let width = obs_data_get_int(settings, SETTINGS_WIDTH) as u32;
         let height = obs_data_get_int(settings, SETTINGS_HEIGHT) as u32;
 
+        #[cfg(feature = "therun-gg")]
+        let therun_api_key =
+            CStr::from_ptr(obs_data_get_string(settings, SETTINGS_THERUN_API_KEY).cast())
+                .to_string_lossy()
+                .to_string();
+        #[cfg(feature = "therun-gg")]
+        let therun_live_tracking = obs_data_get_bool(settings, SETTINGS_THERUN_LIVE_TRACKING);
+        #[cfg(feature = "therun-gg")]
+        let therun_stats_uploading = obs_data_get_bool(settings, SETTINGS_THERUN_STATS_UPLOADING);
+
         Settings {
             #[cfg(feature = "auto-splitting")]
             local_auto_splitter,
@@ -540,6 +566,12 @@ unsafe fn parse_settings(settings: *mut obs_data_t) -> Settings {
             layout,
             width,
             height,
+            #[cfg(feature = "therun-gg")]
+            therun_api_key,
+            #[cfg(feature = "therun-gg")]
+            therun_live_tracking,
+            #[cfg(feature = "therun-gg")]
+            therun_stats_uploading,
         }
     }
 }
@@ -559,6 +591,12 @@ impl State {
             layout,
             width,
             height,
+            #[cfg(feature = "therun-gg")]
+            therun_api_key,
+            #[cfg(feature = "therun-gg")]
+            therun_live_tracking,
+            #[cfg(feature = "therun-gg")]
+            therun_stats_uploading,
         }: Settings,
         _source: *mut obs_source_t,
         obs_settings: *mut obs_data_t,
@@ -571,6 +609,14 @@ impl State {
                 .timer
                 .auto_save
                 .store(auto_save, atomic::Ordering::Relaxed);
+
+            #[cfg(feature = "therun-gg")]
+            configure_therun_gg_client(
+                &global_timer,
+                &therun_api_key,
+                therun_live_tracking,
+                therun_stats_uploading,
+            );
 
             let state = LayoutState::default();
             let renderer = Renderer::new();
@@ -608,6 +654,12 @@ impl State {
                 auto_splitter_map: settings::Map::new(),
                 #[cfg(feature = "auto-splitting")]
                 source: _source,
+                #[cfg(feature = "therun-gg")]
+                therun_api_key,
+                #[cfg(feature = "therun-gg")]
+                therun_live_tracking,
+                #[cfg(feature = "therun-gg")]
+                therun_stats_uploading,
             }
         }
     }
@@ -1142,6 +1194,14 @@ unsafe extern "C" fn splits_path_modified(
 
         handle_splits_path_change(state, splits_path);
 
+        #[cfg(feature = "therun-gg")]
+        configure_therun_gg_client(
+            &state.global_timer,
+            &state.therun_api_key,
+            state.therun_live_tracking,
+            state.therun_stats_uploading,
+        );
+
         #[cfg(feature = "auto-splitting")]
         {
             let info_text = obs_properties_get(_props, SETTINGS_AUTO_SPLITTER_INFO);
@@ -1317,6 +1377,23 @@ unsafe extern "C" fn auto_splitter_open_website(
     }
 }
 
+#[cfg(feature = "therun-gg")]
+unsafe extern "C" fn therun_open_website(
+    _props: *mut obs_properties_t,
+    _prop: *mut obs_property_t,
+    _data: *mut c_void,
+) -> bool {
+    let url = "https://therun.gg/livesplit";
+    info!("Opening therun.gg website: {url}");
+    match open::that(url) {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Could not open website {e}.")
+        }
+    }
+    false
+}
+
 unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
     unsafe {
         let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
@@ -1424,6 +1501,12 @@ const SETTINGS_AUTO_SPLITTER_ACTIVATE: *const c_char = cstr!(c"auto_splitter_act
 const SETTINGS_AUTO_SPLITTER_WEBSITE: *const c_char = cstr!(c"auto_splitter_website");
 const SETTINGS_LAYOUT_PATH: *const c_char = cstr!(c"layout_path");
 const SETTINGS_SAVE_SPLITS: *const c_char = cstr!(c"save_splits");
+#[cfg(feature = "therun-gg")]
+const SETTINGS_THERUN_API_KEY: *const c_char = cstr!(c"therun_api_key");
+#[cfg(feature = "therun-gg")]
+const SETTINGS_THERUN_LIVE_TRACKING: *const c_char = cstr!(c"therun_live_tracking");
+#[cfg(feature = "therun-gg")]
+const SETTINGS_THERUN_STATS_UPLOADING: *const c_char = cstr!(c"therun_stats_uploading");
 
 unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t {
     unsafe {
@@ -1542,6 +1625,45 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
         );
 
         obs_property_set_modified_callback2(splits_path, Some(splits_path_modified), data);
+
+        #[cfg(feature = "therun-gg")]
+        {
+            let therun_gg_properties = obs_properties_create();
+
+            let _api_key = obs_properties_add_text(
+                therun_gg_properties,
+                SETTINGS_THERUN_API_KEY,
+                Text::TheRunApiKey.resolve(lang),
+                OBS_TEXT_PASSWORD,
+            );
+
+            let _get_api_key = obs_properties_add_button(
+                therun_gg_properties,
+                cstr!(c"therun_get_api_key"),
+                Text::TheRunGetApiKey.resolve(lang),
+                Some(therun_open_website),
+            );
+
+            let _live_tracking = obs_properties_add_bool(
+                therun_gg_properties,
+                SETTINGS_THERUN_LIVE_TRACKING,
+                Text::TheRunLiveTracking.resolve(lang),
+            );
+
+            let _stats_uploading = obs_properties_add_bool(
+                therun_gg_properties,
+                SETTINGS_THERUN_STATS_UPLOADING,
+                Text::TheRunStatsUploading.resolve(lang),
+            );
+
+            let _group = obs_properties_add_group(
+                props,
+                cstr!(c"therun_gg_settings_group"),
+                Text::TheRunSettingsGroup.resolve(lang),
+                OBS_GROUP_NORMAL,
+                therun_gg_properties,
+            );
+        }
 
         #[cfg(feature = "auto-splitting")]
         {
@@ -1815,6 +1937,13 @@ unsafe extern "C" fn get_defaults(settings: *mut obs_data_t) {
         obs_data_set_default_int(settings, SETTINGS_WIDTH, 300);
         obs_data_set_default_int(settings, SETTINGS_HEIGHT, 500);
         obs_data_set_default_bool(settings, SETTINGS_AUTO_SAVE, false);
+        #[cfg(feature = "therun-gg")]
+        {
+            let empty = CString::new("").unwrap();
+            obs_data_set_default_string(settings, SETTINGS_THERUN_API_KEY, empty.as_ptr());
+            obs_data_set_default_bool(settings, SETTINGS_THERUN_LIVE_TRACKING, true);
+            obs_data_set_default_bool(settings, SETTINGS_THERUN_STATS_UPLOADING, true);
+        }
     }
 }
 
@@ -1844,6 +1973,9 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 
         let settings = parse_settings(settings_obj);
 
+        #[cfg(feature = "therun-gg")]
+        let timer_path_changed = state.global_timer.timer.path != settings.splits_path;
+
         handle_splits_path_change(state, settings.splits_path);
 
         state.use_game_arguments = settings.use_game_arguments;
@@ -1860,6 +1992,25 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
             .auto_save
             .store(settings.auto_save, atomic::Ordering::Relaxed);
         state.layout = settings.layout;
+
+        #[cfg(feature = "therun-gg")]
+        {
+            if timer_path_changed || state.therun_api_key != settings.therun_api_key {
+                configure_therun_gg_client(
+                    &state.global_timer,
+                    &settings.therun_api_key,
+                    settings.therun_live_tracking,
+                    settings.therun_stats_uploading,
+                );
+            } else {
+                let mut client = state.global_timer.timer.therun_gg_client.write().unwrap();
+                client.set_live_tracking_enabled(settings.therun_live_tracking);
+                client.set_stats_uploading_enabled(settings.therun_stats_uploading);
+            }
+            state.therun_api_key = settings.therun_api_key;
+            state.therun_live_tracking = settings.therun_live_tracking;
+            state.therun_stats_uploading = settings.therun_stats_uploading;
+        }
 
         #[cfg(feature = "auto-splitting")]
         {
@@ -1960,6 +2111,21 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
 
 fn handle_splits_path_change(state: &mut State, splits_path: PathBuf) {
     state.global_timer = get_global_timer(splits_path);
+}
+
+#[cfg(feature = "therun-gg")]
+fn configure_therun_gg_client(
+    global_timer: &GlobalTimer,
+    api_key: &str,
+    live_tracking: bool,
+    stats_uploading: bool,
+) {
+    let mut client = global_timer.timer.therun_gg_client.write().unwrap();
+    if !api_key.is_empty() {
+        *client = therun_gg::Client::new(api_key.to_owned(), live_tracking, stats_uploading);
+    }
+    client.set_live_tracking_enabled(live_tracking);
+    client.set_stats_uploading_enabled(stats_uploading);
 }
 
 fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {

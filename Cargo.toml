@@ -61,6 +61,7 @@ auto-splitting = [
 ]
 therun-gg = [
     "livesplit-core/therun-gg",
+    "dep:open",
     "dep:reqwest",
     "dep:time",
     "tokio/rt-multi-thread",

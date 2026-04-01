@@ -68,7 +68,7 @@ unsafe extern "C" {
         description: *const c_char,
     ) -> *mut obs_property_t;
     pub fn obs_data_get_bool(data: *mut obs_data_t, name: *const c_char) -> bool;
-    #[cfg(feature = "auto-splitting")]
+    #[cfg(any(feature = "auto-splitting", feature = "therun-gg"))]
     pub fn obs_data_set_default_string(
         data: *mut obs_data_t,
         name: *const c_char,
@@ -76,7 +76,7 @@ unsafe extern "C" {
     );
     #[cfg(feature = "auto-splitting")]
     pub fn obs_data_erase(data: *mut obs_data_t, name: *const c_char);
-    #[cfg(feature = "auto-splitting")]
+    #[cfg(any(feature = "auto-splitting", feature = "therun-gg"))]
     pub fn obs_properties_add_group(
         props: *mut obs_properties_t,
         name: *const c_char,

@@ -60,6 +60,11 @@ pub enum Text {
     AutoSplitterSettingsGroup,
     AutoSplitterIncompatible,
     AutoSplitterUnavailable,
+    TheRunSettingsGroup,
+    TheRunApiKey,
+    TheRunLiveTracking,
+    TheRunStatsUploading,
+    TheRunGetApiKey,
 }
 
 impl Text {
@@ -122,6 +127,11 @@ fn resolve_english(text: Text) -> *const c_char {
             cstr!(c"This game's auto splitter is incompatible with LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"No auto splitter available for this game."),
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg Integration"),
+        Text::TheRunApiKey => cstr!(c"Upload Key"),
+        Text::TheRunLiveTracking => cstr!(c"Live Tracking"),
+        Text::TheRunStatsUploading => cstr!(c"Stats Uploading"),
+        Text::TheRunGetApiKey => cstr!(c"Get Upload Key"),
     }
 }
 
@@ -166,6 +176,11 @@ fn resolve_dutch(text: Text) -> *const c_char {
             cstr!(c"De auto-splitter van dit spel is niet compatibel met LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Geen auto-splitter beschikbaar voor dit spel."),
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg-integratie"),
+        Text::TheRunApiKey => cstr!(c"Uploadsleutel"),
+        Text::TheRunLiveTracking => cstr!(c"Live tracking"),
+        Text::TheRunStatsUploading => cstr!(c"Statistieken uploaden"),
+        Text::TheRunGetApiKey => cstr!(c"Uploadsleutel ophalen"),
     }
 }
 
@@ -212,6 +227,11 @@ fn resolve_french(text: Text) -> *const c_char {
             cstr!(c"L'auto-splitter de ce jeu est incompatible avec LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Aucun auto-splitter disponible pour ce jeu."),
+        Text::TheRunSettingsGroup => cstr!(c"Intégration TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Clé d'envoi"),
+        Text::TheRunLiveTracking => cstr!(c"Suivi en direct"),
+        Text::TheRunStatsUploading => cstr!(c"Envoi des statistiques"),
+        Text::TheRunGetApiKey => cstr!(c"Obtenir la clé d'envoi"),
     }
 }
 
@@ -256,6 +276,11 @@ fn resolve_german(text: Text) -> *const c_char {
         Text::AutoSplitterUnavailable => {
             cstr!(c"Für dieses Spiel ist kein Auto-Splitter verfügbar.")
         }
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg-Integration"),
+        Text::TheRunApiKey => cstr!(c"Upload-Schlüssel"),
+        Text::TheRunLiveTracking => cstr!(c"Live-Tracking"),
+        Text::TheRunStatsUploading => cstr!(c"Statistik-Upload"),
+        Text::TheRunGetApiKey => cstr!(c"Upload-Schlüssel holen"),
     }
 }
 
@@ -300,6 +325,11 @@ fn resolve_italian(text: Text) -> *const c_char {
         Text::AutoSplitterUnavailable => {
             cstr!(c"Nessun auto-splitter disponibile per questo gioco.")
         }
+        Text::TheRunSettingsGroup => cstr!(c"Integrazione TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Chiave di upload"),
+        Text::TheRunLiveTracking => cstr!(c"Tracciamento live"),
+        Text::TheRunStatsUploading => cstr!(c"Caricamento statistiche"),
+        Text::TheRunGetApiKey => cstr!(c"Ottieni chiave di upload"),
     }
 }
 
@@ -342,6 +372,11 @@ fn resolve_portuguese(text: Text) -> *const c_char {
             cstr!(c"O auto-splitter deste jogo é incompatível com o LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Não há auto-splitter disponível para este jogo."),
+        Text::TheRunSettingsGroup => cstr!(c"Integração com TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Chave de upload"),
+        Text::TheRunLiveTracking => cstr!(c"Rastreamento ao vivo"),
+        Text::TheRunStatsUploading => cstr!(c"Envio de estatísticas"),
+        Text::TheRunGetApiKey => cstr!(c"Obter chave de upload"),
     }
 }
 
@@ -384,6 +419,11 @@ fn resolve_polish(text: Text) -> *const c_char {
             cstr!(c"Auto-splitter tej gry jest niezgodny z LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Brak auto-splittera dla tej gry."),
+        Text::TheRunSettingsGroup => cstr!(c"Integracja z TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Klucz przesyłania"),
+        Text::TheRunLiveTracking => cstr!(c"Śledzenie na żywo"),
+        Text::TheRunStatsUploading => cstr!(c"Przesyłanie statystyk"),
+        Text::TheRunGetApiKey => cstr!(c"Pobierz klucz przesyłania"),
     }
 }
 
@@ -426,6 +466,11 @@ fn resolve_russian(text: Text) -> *const c_char {
             cstr!(c"Авто-сплиттер этой игры несовместим с LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Для этой игры нет авто-сплиттера."),
+        Text::TheRunSettingsGroup => cstr!(c"Интеграция с TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Ключ загрузки"),
+        Text::TheRunLiveTracking => cstr!(c"Отслеживание в реальном времени"),
+        Text::TheRunStatsUploading => cstr!(c"Загрузка статистики"),
+        Text::TheRunGetApiKey => cstr!(c"Получить ключ загрузки"),
     }
 }
 
@@ -468,6 +513,11 @@ fn resolve_spanish(text: Text) -> *const c_char {
             cstr!(c"El auto-splitter de este juego es incompatible con LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"No hay auto-splitter disponible para este juego."),
+        Text::TheRunSettingsGroup => cstr!(c"Integración con TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Clave de subida"),
+        Text::TheRunLiveTracking => cstr!(c"Seguimiento en vivo"),
+        Text::TheRunStatsUploading => cstr!(c"Subida de estadísticas"),
+        Text::TheRunGetApiKey => cstr!(c"Obtener clave de subida"),
     }
 }
 
@@ -510,6 +560,11 @@ fn resolve_brazilian_portuguese(text: Text) -> *const c_char {
             cstr!(c"O auto-splitter deste jogo é incompatível com o LiveSplit One.")
         }
         Text::AutoSplitterUnavailable => cstr!(c"Nenhum auto-splitter disponível para este jogo."),
+        Text::TheRunSettingsGroup => cstr!(c"Integração com TheRun.gg"),
+        Text::TheRunApiKey => cstr!(c"Chave de upload"),
+        Text::TheRunLiveTracking => cstr!(c"Rastreamento ao vivo"),
+        Text::TheRunStatsUploading => cstr!(c"Envio de estatísticas"),
+        Text::TheRunGetApiKey => cstr!(c"Obter chave de upload"),
     }
 }
 
@@ -550,6 +605,11 @@ fn resolve_chinese_simplified(text: Text) -> *const c_char {
         Text::AutoSplitterSettingsGroup => cstr!(c"自动分段器设置"),
         Text::AutoSplitterIncompatible => cstr!(c"该游戏的自动分段器与 LiveSplit One 不兼容。"),
         Text::AutoSplitterUnavailable => cstr!(c"此游戏没有可用的自动分段器。"),
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg 集成"),
+        Text::TheRunApiKey => cstr!(c"上传密钥"),
+        Text::TheRunLiveTracking => cstr!(c"实时追踪"),
+        Text::TheRunStatsUploading => cstr!(c"统计上传"),
+        Text::TheRunGetApiKey => cstr!(c"获取上传密钥"),
     }
 }
 
@@ -590,6 +650,11 @@ fn resolve_chinese_traditional(text: Text) -> *const c_char {
         Text::AutoSplitterSettingsGroup => cstr!(c"自動分段器設定"),
         Text::AutoSplitterIncompatible => cstr!(c"此遊戲的自動分段器與 LiveSplit One 不相容。"),
         Text::AutoSplitterUnavailable => cstr!(c"此遊戲沒有可用的自動分段器。"),
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg 集成"),
+        Text::TheRunApiKey => cstr!(c"上傳密鑰"),
+        Text::TheRunLiveTracking => cstr!(c"即時追蹤"),
+        Text::TheRunStatsUploading => cstr!(c"統計上傳"),
+        Text::TheRunGetApiKey => cstr!(c"取得上傳密鑰"),
     }
 }
 
@@ -634,6 +699,11 @@ fn resolve_japanese(text: Text) -> *const c_char {
         Text::AutoSplitterUnavailable => {
             cstr!(c"このゲームで利用可能な自動スプリッターはありません。")
         }
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg 連携"),
+        Text::TheRunApiKey => cstr!(c"アップロードキー"),
+        Text::TheRunLiveTracking => cstr!(c"ライブ追跡"),
+        Text::TheRunStatsUploading => cstr!(c"統計のアップロード"),
+        Text::TheRunGetApiKey => cstr!(c"アップロードキーを取得"),
     }
 }
 
@@ -678,5 +748,10 @@ fn resolve_korean(text: Text) -> *const c_char {
         Text::AutoSplitterUnavailable => {
             cstr!(c"이 게임에 사용할 수 있는 자동 스플리터가 없습니다.")
         }
+        Text::TheRunSettingsGroup => cstr!(c"TheRun.gg 통합"),
+        Text::TheRunApiKey => cstr!(c"업로드 키"),
+        Text::TheRunLiveTracking => cstr!(c"실시간 추적"),
+        Text::TheRunStatsUploading => cstr!(c"통계 업로드"),
+        Text::TheRunGetApiKey => cstr!(c"업로드 키 가져오기"),
     }
 }
