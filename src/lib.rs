@@ -13,7 +13,7 @@ use std::{
     ptr,
     sync::{
         atomic::{self, AtomicBool, AtomicPtr},
-        Arc, Mutex, RwLock, RwLockReadGuard, Weak,
+        Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, Weak,
     },
 };
 
@@ -77,6 +77,11 @@ use {
     std::ffi::CString,
 };
 
+#[cfg(feature = "therun-gg")]
+use livesplit_core::networking::therun_gg;
+#[cfg(feature = "therun-gg")]
+use tokio::runtime::{Builder, Runtime};
+
 macro_rules! cstr {
     ($f:literal) => {
         std::ffi::CStr::as_ptr($f)
@@ -119,6 +124,8 @@ struct InnerTimer {
     can_save_splits: bool,
     timer: RwLock<Timer>,
     auto_save: AtomicBool,
+    #[cfg(feature = "therun-gg")]
+    therun_gg_client: RwLock<therun_gg::Client>,
 }
 
 impl InnerTimer {
@@ -130,21 +137,47 @@ impl InnerTimer {
             }
         }
     }
+
+    #[cfg(feature = "therun-gg")]
+    fn send_to_therun_gg(&self, result: &Result) {
+        let Some(runtime) = TOKIO_RUNTIME.get() else {
+            error!("Tokio runtime not initialized");
+            return;
+        };
+
+        let timer = self.timer.read().unwrap();
+        let snapshot = timer.snapshot();
+        let mut client = self.therun_gg_client.write().unwrap();
+
+        if let Some(event) = result.as_ref().ok() {
+            if let Some(future) = client.handle_event(event.clone(), &snapshot) {
+                runtime.spawn(async move {
+                    future.await;
+                });
+            }
+        }
+    }
+
+    #[cfg(not(feature = "therun-gg"))]
+    fn send_to_therun_gg(&self, _result: &Result) {}
 }
 
 impl CommandSink for InnerTimer {
     fn start(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().start();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn split(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().split();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn split_or_start(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().split_or_start();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
@@ -159,36 +192,44 @@ impl CommandSink for InnerTimer {
             self.save();
         }
 
+        self.send_to_therun_gg(&result);
+
         async move { result }
     }
 
     fn undo_split(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().undo_split();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn skip_split(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().skip_split();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn toggle_pause_or_start(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().toggle_pause_or_start();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn pause(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().pause();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn resume(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().resume();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn undo_all_pauses(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().undo_all_pauses();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
@@ -209,16 +250,19 @@ impl CommandSink for InnerTimer {
 
     fn set_game_time(&self, time: TimeSpan) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().set_game_time(time);
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn pause_game_time(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().pause_game_time();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn resume_game_time(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().resume_game_time();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
@@ -240,6 +284,7 @@ impl CommandSink for InnerTimer {
             .write()
             .unwrap()
             .set_current_comparison(comparison);
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
@@ -256,11 +301,13 @@ impl CommandSink for InnerTimer {
 
     fn initialize_game_time(&self) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().initialize_game_time();
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 
     fn set_loading_times(&self, time: TimeSpan) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().set_loading_times(time);
+        self.send_to_therun_gg(&result);
         async move { result }
     }
 }
@@ -274,6 +321,9 @@ impl TimerQuery for InnerTimer {
 }
 
 static TIMERS: Mutex<Vec<Weak<GlobalTimer>>> = Mutex::new(Vec::new());
+
+#[cfg(feature = "therun-gg")]
+static TOKIO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 struct State {
     #[cfg(feature = "auto-splitting")]
@@ -595,23 +645,38 @@ unsafe extern "C" fn get_name(_: *mut c_void) -> *const c_char {
     cstr!(c"LiveSplit One")
 }
 
+fn with_active_timer(data: *mut c_void) -> Option<Arc<InnerTimer>> {
+    unsafe {
+        let guard = (*data.cast::<Mutex<State>>()).lock().unwrap();
+        if !guard.activated {
+            return None;
+        }
+        let timer = guard.global_timer.timer.clone();
+        drop(guard);
+        Some(timer)
+    }
+}
+
+fn with_timer(data: *mut c_void) -> Arc<InnerTimer> {
+    unsafe {
+        let guard = (*data.cast::<Mutex<State>>()).lock().unwrap();
+        let timer = guard.global_timer.timer.clone();
+        drop(guard);
+        timer
+    }
+}
+
 unsafe extern "C" fn split(
     data: *mut c_void,
     _: obs_hotkey_id,
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.split_or_start());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.split_or_start());
     }
 }
 
@@ -621,17 +686,11 @@ unsafe extern "C" fn reset(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.reset(None));
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.reset(None));
     }
 }
 
@@ -641,17 +700,11 @@ unsafe extern "C" fn undo(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.undo_split());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.undo_split());
     }
 }
 
@@ -661,17 +714,11 @@ unsafe extern "C" fn skip(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.skip_split());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.skip_split());
     }
 }
 
@@ -681,17 +728,11 @@ unsafe extern "C" fn pause(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.toggle_pause_or_start());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.toggle_pause_or_start());
     }
 }
 
@@ -701,17 +742,11 @@ unsafe extern "C" fn undo_all_pauses(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.undo_all_pauses());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.undo_all_pauses());
     }
 }
 
@@ -721,17 +756,11 @@ unsafe extern "C" fn previous_comparison(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.switch_to_previous_comparison());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.switch_to_previous_comparison());
     }
 }
 
@@ -741,17 +770,11 @@ unsafe extern "C" fn next_comparison(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.switch_to_next_comparison());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.switch_to_next_comparison());
     }
 }
 
@@ -761,17 +784,11 @@ unsafe extern "C" fn toggle_timing_method(
     _: *mut obs_hotkey_t,
     pressed: bool,
 ) {
-    unsafe {
-        if !pressed {
-            return;
-        }
-
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        if !state.activated {
-            return;
-        }
-
-        drop(state.global_timer.timer.toggle_timing_method());
+    if !pressed {
+        return;
+    }
+    if let Some(timer) = with_active_timer(data) {
+        drop(timer.toggle_timing_method());
     }
 }
 
@@ -1295,23 +1312,25 @@ unsafe extern "C" fn media_get_state(data: *mut c_void) -> obs_media_state {
 
 unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
     unsafe {
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        let phase = state.global_timer.timer.get_timer().current_phase();
+        let guard = (*data.cast::<Mutex<State>>()).lock().unwrap();
+        let phase = guard.global_timer.timer.get_timer().current_phase();
+        let timer = guard.global_timer.timer.clone();
+        drop(guard);
         match phase {
             TimerPhase::NotRunning => {
                 if !pause {
-                    drop(state.global_timer.timer.start());
+                    drop(timer.start());
                 }
             }
             TimerPhase::Running => {
                 if pause {
-                    drop(state.global_timer.timer.pause());
+                    drop(timer.pause());
                 }
             }
             TimerPhase::Ended => {}
             TimerPhase::Paused => {
                 if !pause {
-                    drop(state.global_timer.timer.resume());
+                    drop(timer.resume());
                 }
             }
         }
@@ -1319,32 +1338,21 @@ unsafe extern "C" fn media_play_pause(data: *mut c_void, pause: bool) {
 }
 
 unsafe extern "C" fn media_restart(data: *mut c_void) {
-    unsafe {
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        drop(state.global_timer.timer.reset(None));
-        drop(state.global_timer.timer.start());
-    }
+    let timer = with_timer(data);
+    drop(timer.reset(None));
+    drop(timer.start());
 }
 
 unsafe extern "C" fn media_stop(data: *mut c_void) {
-    unsafe {
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        drop(state.global_timer.timer.reset(None));
-    }
+    drop(with_timer(data).reset(None));
 }
 
 unsafe extern "C" fn media_next(data: *mut c_void) {
-    unsafe {
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        drop(state.global_timer.timer.split());
-    }
+    drop(with_timer(data).split());
 }
 
 unsafe extern "C" fn media_previous(data: *mut c_void) {
-    unsafe {
-        let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
-        drop(state.global_timer.timer.undo_split());
-    }
+    drop(with_timer(data).undo_split());
 }
 
 unsafe extern "C" fn media_get_time(data: *mut c_void) -> i64 {
@@ -1953,12 +1961,16 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
         let timer = Timer::new(run).unwrap();
         #[cfg(feature = "auto-splitting")]
         let auto_splitter = auto_splitting::Runtime::new();
+        #[cfg(feature = "therun-gg")]
+        let therun_gg_client = therun_gg::Client::new(String::new(), false, false);
         let global_timer = Arc::new(GlobalTimer {
             timer: Arc::new(InnerTimer {
                 timer: RwLock::new(timer),
                 auto_save: AtomicBool::new(false),
                 path: splits_path,
                 can_save_splits,
+                #[cfg(feature = "therun-gg")]
+                therun_gg_client: RwLock::new(therun_gg_client),
             }),
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
@@ -2054,6 +2066,20 @@ pub extern "C" fn obs_module_load() -> bool {
 
     unsafe {
         obs_register_source_s(source_info, mem::size_of_val(source_info) as _);
+    }
+
+    #[cfg(feature = "therun-gg")]
+    if TOKIO_RUNTIME
+        .set(
+            Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(1)
+                .build()
+                .expect("Failed to create tokio runtime"),
+        )
+        .is_err()
+    {
+        error!("Tokio runtime already initialized");
     }
 
     #[cfg(feature = "auto-splitting")]
