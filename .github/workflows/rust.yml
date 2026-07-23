@@ -109,15 +109,11 @@ jobs:
 
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: hecrj/setup-rust-action@v2
-        with:
-          rust-version: ${{ matrix.toolchain || 'stable' }}
+        uses: actions/checkout@v6
 
       - name: Install Target
-        if: matrix.install_target != ''
+        if: matrix.install_target
+        shell: bash
         run: rustup target add ${{ matrix.target }}
 
       - name: Install OBS (macOS)
@@ -126,7 +122,7 @@ jobs:
 
       - name: Download cross
         if: matrix.cross == ''
-        uses: robinraju/release-downloader@v1.7
+        uses: robinraju/release-downloader@v1.13
         with:
           repository: "cross-rs/cross"
           latest: true
@@ -166,7 +162,7 @@ jobs:
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/') && matrix.release == ''
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: obs-livesplit-one-*.*
         env:
@@ -176,12 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: hecrj/setup-rust-action@v2
-        with:
-          components: clippy
+        uses: actions/checkout@v6
 
       - name: Run Clippy
         run: cargo clippy --all-features
@@ -190,12 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Commit
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: hecrj/setup-rust-action@v2
-        with:
-          components: rustfmt
+        uses: actions/checkout@v6
 
       - name: Run cargo fmt
         run: cargo fmt -- --check || true
