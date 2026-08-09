@@ -90,7 +90,6 @@ unsafe extern "C" {
         description: *const c_char,
         text_type: obs_text_type,
     ) -> *mut obs_property_t;
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_properties_add_list(
         props: *mut obs_properties_t,
         name: *const c_char,
@@ -106,7 +105,6 @@ unsafe extern "C" {
         filter: *const c_char,
         default_path: *const c_char,
     ) -> *mut obs_property_t;
-    #[cfg(feature = "auto-splitting")]
     pub fn obs_property_list_add_string(
         prop: *mut obs_property_t,
         name: *const c_char,
