@@ -1133,7 +1133,10 @@ unsafe fn update_auto_splitter_ui(
 ) {
     unsafe {
         if let Some(auto_splitter) = auto_splitters::get_list().get_for_game(game_name) {
-            obs_property_set_enabled(website_button, auto_splitter.website.is_some());
+            obs_property_set_enabled(
+                website_button,
+                auto_splitters::get_list().get_website_for_game(game_name).is_some(),
+            );
 
             if !auto_splitter.is_using_auto_splitting_runtime() {
                 obs_property_set_enabled(activate_button, false);
@@ -1144,7 +1147,10 @@ unsafe fn update_auto_splitter_ui(
             } else {
                 obs_property_set_enabled(activate_button, true);
 
-                let mut auto_splitter_description = auto_splitter.description.as_bytes().to_vec();
+                let description = auto_splitters::get_list()
+                    .get_description_for_game(game_name)
+                    .unwrap_or("");
+                let mut auto_splitter_description = description.as_bytes().to_vec();
                 auto_splitter_description.push(0);
 
                 obs_property_set_description(
