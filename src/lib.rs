@@ -51,6 +51,7 @@ use livesplit_core::{
     run::{
         parser::{composite, TimerKind},
         saver::livesplit::{save_timer, IoWrite},
+        StoredAutoSplitterSettings,
     },
     settings::ImageCache,
     Layout, Run, Segment, TimeSpan, Timer, TimerPhase, TimingMethod,
@@ -109,7 +110,7 @@ unsafe impl<T> Send for UnsafeMultiThread<T> {}
 struct GlobalTimer {
     timer: Arc<InnerTimer>,
     #[cfg(feature = "auto-splitting")]
-    auto_splitter: auto_splitting::Runtime<Arc<InnerTimer>>,
+    auto_splitter: Arc<auto_splitting::Runtime<Arc<InnerTimer>>>,
     #[cfg(feature = "auto-splitting")]
     auto_splitter_is_enabled: AtomicBool,
 }
@@ -119,10 +120,17 @@ struct InnerTimer {
     can_save_splits: bool,
     timer: RwLock<Timer>,
     auto_save: AtomicBool,
+    #[cfg(feature = "auto-splitting")]
+    auto_splitter: std::sync::OnceLock<Weak<auto_splitting::Runtime<Arc<InnerTimer>>>>,
 }
 
 impl InnerTimer {
     fn save(&self) {
+        #[cfg(feature = "auto-splitting")]
+        if let Some(auto_splitter) = self.auto_splitter.get().and_then(Weak::upgrade) {
+            auto_splitter.store_settings();
+        }
+
         if self.can_save_splits {
             if let Ok(file) = File::create(&self.path) {
                 let _ = save_timer(&self.get_timer(), IoWrite(BufWriter::new(file)));
@@ -262,6 +270,17 @@ impl CommandSink for InnerTimer {
     fn set_loading_times(&self, time: TimeSpan) -> impl Future<Output = Result> + 'static {
         let result = self.timer.write().unwrap().set_loading_times(time);
         async move { result }
+    }
+
+    fn set_auto_splitter_settings(
+        &self,
+        settings: StoredAutoSplitterSettings,
+    ) -> impl Future<Output = Result> + 'static {
+        self.timer
+            .write()
+            .unwrap()
+            .set_stored_auto_splitter_settings(&settings);
+        async { Ok(Event::AutoSplitterSettingsChanged) }
     }
 }
 
@@ -579,6 +598,7 @@ impl State {
                 if let Some(auto_splitter_map) = self.global_timer.auto_splitter.settings_map() {
                     if !self.auto_splitter_map.is_unchanged(&auto_splitter_map) {
                         self.auto_splitter_map = auto_splitter_map;
+                        self.global_timer.auto_splitter.store_settings();
                         needs_properties_update = true;
                     }
                 }
@@ -1162,6 +1182,7 @@ unsafe fn update_auto_splitter_ui(
 
 #[cfg(feature = "auto-splitting")]
 fn auto_splitter_unload(global_timer: &GlobalTimer) {
+    global_timer.auto_splitter.store_settings();
     global_timer.auto_splitter.unload().ok();
 
     global_timer
@@ -1173,7 +1194,7 @@ fn auto_splitter_unload(global_timer: &GlobalTimer) {
 fn auto_splitter_load(global_timer: &GlobalTimer, path: PathBuf) {
     let enabled = match global_timer
         .auto_splitter
-        .load(path, global_timer.timer.clone())
+        .load_from_path(global_timer.timer.clone(), path)
     {
         Err(e) => {
             warn!("Auto Splitter could not be loaded: {e}");
@@ -1765,6 +1786,45 @@ unsafe extern "C" fn get_properties(data: *mut c_void) -> *mut obs_properties_t 
                                 }
                             }
                         }
+                        WidgetKind::TextInput { default_value } => {
+                            let property = obs_properties_add_text(
+                                *parents.last().unwrap(),
+                                setting_key.as_ptr(),
+                                widget_description.as_ptr(),
+                                OBS_TEXT_DEFAULT,
+                            );
+
+                            if let Some(tooltip) = widget
+                                .tooltip
+                                .as_ref()
+                                .and_then(|t| CString::new(t.as_bytes()).ok())
+                            {
+                                obs_property_set_long_description(property, tooltip.as_ptr());
+                            }
+
+                            if let Some(value) = state
+                                .auto_splitter_map
+                                .get(&widget.key)
+                                .and_then(|v| v.as_string())
+                                .and_then(|v| CString::new(v.as_bytes()).ok())
+                            {
+                                obs_data_set_string(
+                                    state.obs_settings,
+                                    setting_key.as_ptr(),
+                                    value.as_ptr(),
+                                );
+                            } else {
+                                obs_data_erase(state.obs_settings, setting_key.as_ptr());
+                            }
+
+                            if let Ok(default_value) = CString::new(default_value.as_bytes()) {
+                                obs_data_set_default_string(
+                                    state.obs_settings,
+                                    setting_key.as_ptr(),
+                                    default_value.as_ptr(),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1895,6 +1955,18 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
                                 map.remove(key);
                             }
                         }
+                        WidgetKind::TextInput { default_value } => {
+                            if let Some(value) =
+                                CStr::from_ptr(obs_data_get_string(settings_obj, data_key.as_ptr()))
+                                    .to_str()
+                                    .ok()
+                                    .filter(|v| *v != &**default_value)
+                            {
+                                map.insert(key.clone(), Value::String(Arc::from(value)));
+                            } else {
+                                map.remove(key);
+                            }
+                        }
                     }
                 }
 
@@ -1905,6 +1977,7 @@ unsafe extern "C" fn update(data: *mut c_void, settings_obj: *mut obs_data_t) {
                     != Some(false)
                 {
                     state.auto_splitter_map = map;
+                    state.global_timer.auto_splitter.store_settings();
                     break;
                 }
             }
@@ -1951,15 +2024,20 @@ fn get_global_timer(splits_path: PathBuf) -> Arc<GlobalTimer> {
         debug!("Storing timer for reuse.");
         let (run, can_save_splits) = parse_run(&splits_path).unwrap_or_else(default_run);
         let timer = Timer::new(run).unwrap();
+        let timer = Arc::new(InnerTimer {
+            timer: RwLock::new(timer),
+            auto_save: AtomicBool::new(false),
+            path: splits_path,
+            can_save_splits,
+            #[cfg(feature = "auto-splitting")]
+            auto_splitter: std::sync::OnceLock::new(),
+        });
         #[cfg(feature = "auto-splitting")]
-        let auto_splitter = auto_splitting::Runtime::new();
+        let auto_splitter = Arc::new(auto_splitting::Runtime::new());
+        #[cfg(feature = "auto-splitting")]
+        let _ = timer.auto_splitter.set(Arc::downgrade(&auto_splitter));
         let global_timer = Arc::new(GlobalTimer {
-            timer: Arc::new(InnerTimer {
-                timer: RwLock::new(timer),
-                auto_save: AtomicBool::new(false),
-                path: splits_path,
-                can_save_splits,
-            }),
+            timer,
             #[cfg(feature = "auto-splitting")]
             auto_splitter,
             #[cfg(feature = "auto-splitting")]
