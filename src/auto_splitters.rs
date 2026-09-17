@@ -88,6 +88,18 @@ pub struct AutoSplitter {
     pub description: String,
     #[serde(rename = "Website")]
     pub website: Option<String>,
+    #[serde(rename = "AutoSplittingRuntime")]
+    auto_splitting_runtime: Option<AutoSplittingRuntime>,
+}
+
+#[derive(Deserialize)]
+pub struct AutoSplittingRuntime {
+    #[serde(rename = "URL")]
+    pub url: String,
+    #[serde(rename = "Description")]
+    pub description: Option<String>,
+    #[serde(rename = "Website")]
+    pub website: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -117,7 +129,21 @@ impl List {
     }
 
     pub fn get_website_for_game(&self, game_name: &str) -> Option<&str> {
-        self.get_for_game(game_name)?.website.as_deref()
+        let splitter = self.get_for_game(game_name)?;
+        splitter
+            .auto_splitting_runtime
+            .as_ref()
+            .and_then(|r| r.website.as_deref())
+            .or(splitter.website.as_deref())
+    }
+
+    pub fn get_description_for_game(&self, game_name: &str) -> Option<&str> {
+        let splitter = self.get_for_game(game_name)?;
+        splitter
+            .auto_splitting_runtime
+            .as_ref()
+            .and_then(|r| r.description.as_deref())
+            .or(Some(&splitter.description))
     }
 
     pub fn get_for_game(&self, game_name: &str) -> Option<&AutoSplitter> {
@@ -166,6 +192,38 @@ impl Downloader {
     }
 
     pub fn download(&self, auto_splitter: &AutoSplitter, folder: &Path) -> Option<PathBuf> {
+        // Prefer AutoSplittingRuntime child URL if present (new shape for PoE2).
+        // Old code ignored the unknown child and would not find the wasm.
+        if let Some(runtime) = &auto_splitter.auto_splitting_runtime {
+            let url = &runtime.url;
+            let is_wasm = Url::parse(url)
+                .ok()
+                .and_then(|u| {
+                    u.path_segments()
+                        .and_then(|mut s| s.next_back().map(|seg| seg.ends_with(".wasm")))
+                })
+                .unwrap_or_else(|| url.ends_with(".wasm"));
+            if !is_wasm {
+                error!(
+                    "The AutoSplittingRuntime URL does not point to a WebAssembly module: `{url}`."
+                );
+                return None;
+            }
+
+            let mut file_paths = Vec::new();
+            if let Err(e) = self
+                .download_file(url, folder, &mut file_paths)
+                .with_context(|| format_err!("Failed downloading `{url}`."))
+            {
+                error!("{e:#?}");
+                return None;
+            }
+
+            return file_paths
+                .into_iter()
+                .find(|path| path.extension().is_some_and(|e| e == "wasm"));
+        }
+
         let mut file_paths = Vec::new();
 
         for url in &auto_splitter.urls.urls {
@@ -213,9 +271,11 @@ impl Downloader {
 
 impl AutoSplitter {
     pub fn is_using_auto_splitting_runtime(&self) -> bool {
-        self.script_type
-            .as_ref()
-            .is_some_and(|t| t == "AutoSplittingRuntime")
+        self.auto_splitting_runtime.is_some()
+            || self
+                .script_type
+                .as_ref()
+                .is_some_and(|t| t == "AutoSplittingRuntime")
     }
 }
 
@@ -278,5 +338,89 @@ pub fn set_up() {
                 from_file.context("Failed loading the list of auto splitters from the cache.")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_list(source: &str) -> List {
+        List {
+            inner: de::from_str(source).unwrap(),
+            source: source.to_owned(),
+        }
+    }
+
+    #[test]
+    fn prefers_nested_auto_splitting_runtime() {
+        let source = r#"
+            <AutoSplitters>
+                <AutoSplitter>
+                    <Games>
+                        <Game>Example Game</Game>
+                    </Games>
+                    <URLs>
+                        <URL>https://example.com/example.asl</URL>
+                    </URLs>
+                    <Type>Script</Type>
+                    <Description>ASL splitter</Description>
+                    <Website>https://example.com/asl</Website>
+                    <AutoSplittingRuntime>
+                        <URL>https://example.com/example.wasm</URL>
+                        <Description>WASM splitter</Description>
+                        <Website>https://example.com/wasm</Website>
+                    </AutoSplittingRuntime>
+                </AutoSplitter>
+            </AutoSplitters>
+        "#;
+        let list = parse_list(source);
+        let splitter = list.get_for_game("Example Game").unwrap();
+        let runtime = splitter.auto_splitting_runtime.as_ref().unwrap();
+
+        assert!(splitter.is_using_auto_splitting_runtime());
+        assert_eq!(splitter.urls.urls, ["https://example.com/example.asl"]);
+        assert_eq!(runtime.url, "https://example.com/example.wasm");
+        assert_eq!(
+            list.get_description_for_game("Example Game"),
+            Some("WASM splitter")
+        );
+        assert_eq!(
+            list.get_website_for_game("Example Game"),
+            Some("https://example.com/wasm")
+        );
+    }
+
+    #[test]
+    fn supports_wasm_only_auto_splitting_runtime_entry() {
+        let source = r#"
+            <AutoSplitters>
+                <AutoSplitter>
+                    <Games>
+                        <Game>Example Game</Game>
+                    </Games>
+                    <URLs>
+                        <URL>https://example.com/example.wasm</URL>
+                    </URLs>
+                    <Type>Script</Type>
+                    <ScriptType>AutoSplittingRuntime</ScriptType>
+                    <Description>WASM splitter</Description>
+                    <Website>https://example.com/wasm</Website>
+                </AutoSplitter>
+            </AutoSplitters>
+        "#;
+        let list = parse_list(source);
+        let splitter = list.get_for_game("Example Game").unwrap();
+
+        assert!(splitter.is_using_auto_splitting_runtime());
+        assert!(splitter.auto_splitting_runtime.is_none());
+        assert_eq!(
+            list.get_description_for_game("Example Game"),
+            Some("WASM splitter")
+        );
+        assert_eq!(
+            list.get_website_for_game("Example Game"),
+            Some("https://example.com/wasm")
+        );
     }
 }
