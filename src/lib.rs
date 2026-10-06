@@ -1152,13 +1152,8 @@ unsafe fn update_auto_splitter_ui(
     game_name: &str,
 ) {
     unsafe {
-        if let Some(auto_splitter) = auto_splitters::get_list().get_for_game(game_name) {
-            obs_property_set_enabled(
-                website_button,
-                auto_splitters::get_list()
-                    .get_website_for_game(game_name)
-                    .is_some(),
-            );
+        if let Some(auto_splitter) = auto_splitters::get_for_game(game_name) {
+            obs_property_set_enabled(website_button, auto_splitter.website.is_some());
 
             if !auto_splitter.is_using_auto_splitting_runtime() {
                 obs_property_set_enabled(activate_button, false);
@@ -1169,10 +1164,7 @@ unsafe fn update_auto_splitter_ui(
             } else {
                 obs_property_set_enabled(activate_button, true);
 
-                let description = auto_splitters::get_list()
-                    .get_description_for_game(game_name)
-                    .unwrap_or("");
-                let mut auto_splitter_description = description.as_bytes().to_vec();
+                let mut auto_splitter_description = auto_splitter.description.as_bytes().to_vec();
                 auto_splitter_description.push(0);
 
                 obs_property_set_description(
@@ -1283,13 +1275,14 @@ unsafe extern "C" fn auto_splitter_open_website(
     unsafe {
         let state: &mut State = &mut (*data.cast::<Mutex<State>>()).lock().unwrap();
 
-        let website = auto_splitters::get_list()
-            .get_website_for_game(state.global_timer.timer.get_timer().run().game_name());
+        let website =
+            auto_splitters::get_for_game(state.global_timer.timer.get_timer().run().game_name())
+                .and_then(|splitter| splitter.website);
 
         match website {
             Some(website) => {
                 info!("Opening auto splitter website: {website}");
-                match open::that(website) {
+                match open::that(website.as_ref()) {
                     Ok(_) => {}
                     Err(e) => {
                         error!("Could not open website {e}.")

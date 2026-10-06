@@ -1,14 +1,13 @@
-use anyhow::{format_err, Context, Error, Result};
-use livesplit_core::util::PopulateString;
+use anyhow::{Context, Error, Result};
+use livesplit_core::auto_splitting::list::{
+    AutoSplitter, Downloader as ListDownloader, List, DEFAULT_LIST_URL,
+};
 use log::{error, info, warn};
-use quick_xml::de;
-use reqwest::{blocking::Client, Url};
-use serde_derive::Deserialize;
+use reqwest::Url;
 use std::{
     ffi::CStr,
     fs,
     path::{Path, PathBuf},
-    str,
     sync::{
         atomic::{self},
         OnceLock,
@@ -30,6 +29,7 @@ pub fn get_module_config_path() -> &'static PathBuf {
                 crate::OBS_MODULE_POINTER.load(atomic::Ordering::Relaxed),
                 cstr!(c""),
             );
+
             if let Ok(config_path) = CStr::from_ptr(config_path_ptr).to_str() {
                 buffer.push(config_path);
             }
@@ -39,12 +39,26 @@ pub fn get_module_config_path() -> &'static PathBuf {
     })
 }
 
-pub static LIST: OnceLock<List> = OnceLock::new();
+static LIST_SOURCE: OnceLock<String> = OnceLock::new();
 
-pub fn get_list() -> &'static List {
-    static EMPTY: List = List::empty();
+pub fn get_list() -> List<'static> {
+    LIST_SOURCE
+        .get()
+        .map_or_else(List::empty, |source| List::new(source))
+}
 
-    LIST.get().unwrap_or(&EMPTY)
+pub fn get_for_game(game_name: &str) -> Option<AutoSplitter<'static>> {
+    lookup(get_list(), game_name)
+}
+
+fn lookup<'a>(list: List<'a>, game_name: &str) -> Option<AutoSplitter<'a>> {
+    match list.get_for_game(game_name) {
+        Ok(splitter) => splitter,
+        Err(error) => {
+            error!("Failed looking up the auto splitter for `{game_name}`: {error}");
+            None
+        }
+    }
 }
 
 pub fn get_downloader() -> &'static Downloader {
@@ -60,283 +74,136 @@ pub fn get_path() -> &'static PathBuf {
 }
 
 pub struct Downloader {
-    client: Client,
-}
-
-pub struct List {
-    inner: ListInner,
-    source: String,
-}
-
-#[derive(Deserialize)]
-struct ListInner {
-    #[serde(rename = "AutoSplitter")]
-    auto_splitters: Vec<AutoSplitter>,
-}
-
-#[derive(Deserialize)]
-pub struct AutoSplitter {
-    #[serde(rename = "Games")]
-    games: Games,
-    #[serde(rename = "URLs")]
-    urls: Urls,
-    // #[serde(rename = "Type")]
-    // module_type: String,
-    #[serde(rename = "ScriptType")]
-    script_type: Option<String>,
-    #[serde(rename = "Description")]
-    pub description: String,
-    #[serde(rename = "Website")]
-    pub website: Option<String>,
-    #[serde(rename = "AutoSplittingRuntime")]
-    auto_splitting_runtime: Option<AutoSplittingRuntime>,
-}
-
-#[derive(Deserialize)]
-pub struct AutoSplittingRuntime {
-    #[serde(rename = "URL")]
-    pub url: String,
-    #[serde(rename = "Description")]
-    pub description: Option<String>,
-    #[serde(rename = "Website")]
-    pub website: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Games {
-    #[serde(rename = "Game")]
-    games: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct Urls {
-    #[serde(rename = "URL")]
-    urls: Vec<String>,
-}
-
-impl List {
-    pub const fn empty() -> Self {
-        Self {
-            inner: ListInner {
-                auto_splitters: Vec::new(),
-            },
-            source: String::new(),
-        }
-    }
-
-    pub fn save_to_disk(&self, folder: &Path) -> Result<()> {
-        fs::write(folder.join(LIST_FILE_NAME), &self.source).map_err(Into::into)
-    }
-
-    pub fn get_website_for_game(&self, game_name: &str) -> Option<&str> {
-        let splitter = self.get_for_game(game_name)?;
-        splitter
-            .auto_splitting_runtime
-            .as_ref()
-            .and_then(|r| r.website.as_deref())
-            .or(splitter.website.as_deref())
-    }
-
-    pub fn get_description_for_game(&self, game_name: &str) -> Option<&str> {
-        let splitter = self.get_for_game(game_name)?;
-        splitter
-            .auto_splitting_runtime
-            .as_ref()
-            .and_then(|r| r.description.as_deref())
-            .or(Some(&splitter.description))
-    }
-
-    pub fn get_for_game(&self, game_name: &str) -> Option<&AutoSplitter> {
-        self.inner
-            .auto_splitters
-            .iter()
-            .find(|x| x.games.games.iter().any(|g| g == game_name))
-    }
+    client: ListDownloader,
+    // OBS invokes these operations through synchronous callbacks. Keep the
+    // runtime and persistence here, while livesplit-core only provides async
+    // downloads into memory.
+    runtime: tokio::runtime::Runtime,
 }
 
 impl Downloader {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
-            client: Client::builder()
-                .use_rustls_tls()
-                .http2_prior_knowledge()
+            client: ListDownloader::new().expect("Failed creating the auto splitter HTTP client"),
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
                 .build()
-                .unwrap(),
+                .expect("Failed creating the auto splitter download runtime"),
         }
     }
 
-    pub fn download_list(&self, folder: &Path) -> Result<List, [Error; 2]> {
-        let from_github_error = match get_list_from_github(&self.client) {
-            Ok(list) => return Ok(list),
-            Err(e) => e,
+    fn download_list(&self, folder: &Path) -> Result<String, [Error; 2]> {
+        let download_error = match self
+            .runtime
+            .block_on(self.client.download_list(DEFAULT_LIST_URL))
+        {
+            Ok(source) => return Ok(source),
+            Err(error) => Error::new(error),
         };
 
-        let from_file_error = match get_list_from_file(folder) {
-            Ok(list) => {
-                warn!("Failed downloading the auto splitters list from GitHub. Using the cached version. Error: {from_github_error:?}");
-                return Ok(list);
+        match fs::read_to_string(folder.join(LIST_FILE_NAME)) {
+            Ok(source) => {
+                warn!("Failed downloading the auto splitters list. Using the cached version: {download_error:#}");
+                Ok(source)
             }
-            Err(e) => e,
-        };
-
-        Err([from_github_error, from_file_error])
+            Err(error) => Err([download_error, error.into()]),
+        }
     }
 
     pub fn download_for_game(
         &self,
-        list: &List,
+        list: List<'_>,
         game_name: &str,
         folder: &Path,
     ) -> Option<PathBuf> {
-        self.download(list.get_for_game(game_name)?, folder)
-    }
+        let splitter = lookup(list, game_name)?;
 
-    pub fn download(&self, auto_splitter: &AutoSplitter, folder: &Path) -> Option<PathBuf> {
-        // Prefer AutoSplittingRuntime child URL if present (new shape for PoE2).
-        // Old code ignored the unknown child and would not find the wasm.
-        if let Some(runtime) = &auto_splitter.auto_splitting_runtime {
-            let url = &runtime.url;
-            let is_wasm = Url::parse(url)
-                .ok()
-                .and_then(|u| {
-                    u.path_segments()
-                        .and_then(|mut s| s.next_back().map(|seg| seg.ends_with(".wasm")))
-                })
-                .unwrap_or_else(|| url.ends_with(".wasm"));
-            if !is_wasm {
-                error!(
-                    "The AutoSplittingRuntime URL does not point to a WebAssembly module: `{url}`."
-                );
-                return None;
-            }
-
-            let mut file_paths = Vec::new();
-            if let Err(e) = self
-                .download_file(url, folder, &mut file_paths)
-                .with_context(|| format_err!("Failed downloading `{url}`."))
-            {
-                error!("{e:#?}");
-                return None;
-            }
-
-            return file_paths
-                .into_iter()
-                .find(|path| path.extension().is_some_and(|e| e == "wasm"));
+        if !splitter.is_using_auto_splitting_runtime() {
+            return None;
         }
 
-        let mut file_paths = Vec::new();
+        let urls = splitter.urls();
 
-        for url in &auto_splitter.urls.urls {
-            if let Err(e) = self
-                .download_file(url, folder, &mut file_paths)
-                .with_context(|| format_err!("Failed downloading `{url}`."))
-            {
-                error!("{e:#?}");
+        if !urls.iter().any(|url| {
+            download_path(url, folder).is_ok_and(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "wasm")
+            })
+        }) {
+            error!("The auto splitter for `{game_name}` has no WebAssembly module URL.");
+            return None;
+        }
+
+        let mut wasm_path = None;
+
+        for url in urls {
+            match self.download_file(url, folder) {
+                Ok(path) => {
+                    if wasm_path.is_none()
+                        && path
+                            .extension()
+                            .is_some_and(|extension| extension == "wasm")
+                    {
+                        wasm_path = Some(path);
+                    }
+                }
+                Err(error) => error!("Failed downloading `{url}`: {error:#}"),
             }
         }
 
-        file_paths
-            .into_iter()
-            .find(|path| path.extension().is_some_and(|e| e == "wasm"))
+        wasm_path
     }
 
-    fn download_file(&self, url: &str, folder: &Path, file_paths: &mut Vec<PathBuf>) -> Result<()> {
-        let url = Url::parse(url).context("Failed parsing the URL.")?;
-
-        let file_name = url
-            .path_segments()
-            .and_then(|mut s| s.next_back())
-            .context("There is no file name in the URL.")?;
-
-        let file_name = percent_encoding::percent_decode_str(file_name).decode_utf8_lossy();
-        let file_path = folder.join(file_name.as_str());
-
+    fn download_file(&self, url: &str, folder: &Path) -> Result<PathBuf> {
+        let path = download_path(url, folder)?;
         let bytes = self
-            .client
-            .get(url)
-            .send()
-            .context("Failed sending the request.")?
-            .error_for_status()
-            .context("The response is unsuccessful.")?
-            .bytes()
-            .context("Failed receiving the response.")?;
+            .runtime
+            .block_on(self.client.download_file(url))
+            .context("Failed downloading the file.")?;
 
-        fs::write(&file_path, bytes).context("Failed writing the file.")?;
-
-        file_paths.push(file_path);
-
-        Ok(())
+        fs::write(&path, bytes).context("Failed writing the file.")?;
+        Ok(path)
     }
 }
 
-impl AutoSplitter {
-    pub fn is_using_auto_splitting_runtime(&self) -> bool {
-        self.auto_splitting_runtime.is_some()
-            || self
-                .script_type
-                .as_ref()
-                .is_some_and(|t| t == "AutoSplittingRuntime")
-    }
-}
+fn download_path(url: &str, folder: &Path) -> Result<PathBuf> {
+    let url = Url::parse(url).context("Failed parsing the URL.")?;
+    let file_name = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .context("There is no file name in the URL.")?;
 
-fn get_list_from_github(client: &Client) -> Result<List> {
-    let url = "https://raw.githubusercontent.com/LiveSplit/LiveSplit.AutoSplitters/master/LiveSplit.AutoSplitters.xml";
+    let file_name = percent_encoding::percent_decode_str(file_name).decode_utf8_lossy();
 
-    let source = client
-        .get(url)
-        .send()
-        .context("Failed sending the request.")?
-        .error_for_status()
-        .context("The response was unsuccessful.")?
-        .text()
-        .context("Failed receiving the body as text.")?;
+    anyhow::ensure!(
+        !file_name.is_empty()
+            && !matches!(file_name.as_ref(), "." | "..")
+            && !file_name.contains(['/', '\\', ':', '\0']),
+        "The URL does not contain a safe file name."
+    );
 
-    Ok(List {
-        inner: de::from_str(&source).context("Failed parsing the list.")?,
-        source,
-    })
-}
-
-fn get_list_from_file(folder: &Path) -> Result<List> {
-    let source =
-        fs::read_to_string(folder.join(LIST_FILE_NAME)).context("Failed reading the file.")?;
-
-    Ok(List {
-        inner: de::from_str(&source).context("Failed parsing the list.")?,
-        source,
-    })
+    Ok(folder.join(file_name.as_ref()))
 }
 
 pub fn set_up() {
-    let auto_splitters_path = get_path();
+    let folder = get_path();
 
-    if let Err(e) = fs::create_dir_all(auto_splitters_path)
-        .context("Failed creating the auto splitters folder.")
-    {
-        error!("{:?}", e);
+    if let Err(error) = fs::create_dir_all(folder) {
+        error!("Failed creating the auto splitters folder: {error}");
     }
 
-    match get_downloader().download_list(get_module_config_path()) {
-        Ok(list) => {
-            if let Err(e) = list
-                .save_to_disk(auto_splitters_path)
-                .context("Failed saving the list of auto splitters.")
-            {
-                error!("{:?}", e);
+    match get_downloader().download_list(folder) {
+        Ok(source) => {
+            if let Err(error) = fs::write(folder.join(LIST_FILE_NAME), &source) {
+                error!("Failed saving the list of auto splitters: {error}");
             }
 
-            let _ = LIST.set(list);
+            let _ = LIST_SOURCE.set(source);
             info!("Auto splitter list loaded.");
         }
-        Err([from_github, from_file]) => {
-            error!(
-                "{:?}",
-                from_github.context("Failed downloading the list of auto splitters.")
-            );
-            error!(
-                "{:?}",
-                from_file.context("Failed loading the list of auto splitters from the cache.")
-            );
+        Err([download_error, cache_error]) => {
+            error!("Failed downloading the list of auto splitters: {download_error:#}");
+            error!("Failed loading the cached list of auto splitters: {cache_error:#}");
         }
     }
 }
@@ -345,82 +212,128 @@ pub fn set_up() {
 mod tests {
     use super::*;
 
-    fn parse_list(source: &str) -> List {
-        List {
-            inner: de::from_str(source).unwrap(),
-            source: source.to_owned(),
+    #[test]
+    fn uses_runtime_metadata_and_download_url() {
+        let source = r#"<AutoSplitters><AutoSplitter>
+            <Games><Game>Example &amp; Game</Game></Games>
+            <URLs><URL>https://example.com/legacy.asl</URL></URLs>
+            <Description>Legacy description</Description>
+            <Website>https://example.com/legacy</Website>
+            <AutoSplittingRuntime>
+                <URL>https://example.com/game%20one.wasm?x=1&amp;y=2</URL>
+                <Description>Runtime description</Description>
+                <Website>https://example.com/runtime</Website>
+            </AutoSplittingRuntime>
+        </AutoSplitter></AutoSplitters>"#;
+
+        let splitter = lookup(List::new(source), "Example & Game").unwrap();
+        assert!(splitter.is_using_auto_splitting_runtime());
+        assert_eq!(splitter.description, "Runtime description");
+
+        assert_eq!(
+            splitter.website.as_deref(),
+            Some("https://example.com/runtime")
+        );
+
+        assert_eq!(
+            splitter.urls(),
+            ["https://example.com/game%20one.wasm?x=1&y=2"]
+        );
+
+        assert_eq!(
+            download_path(&splitter.urls()[0], Path::new("splitters")).unwrap(),
+            Path::new("splitters/game one.wasm")
+        );
+    }
+
+    #[test]
+    fn lookup_handles_missing_games_and_malformed_xml() {
+        assert!(lookup(List::empty(), "Unknown").is_none());
+        assert!(lookup(List::new("<AutoSplitters>"), "Unknown").is_none());
+    }
+
+    #[test]
+    fn rejects_download_paths_outside_the_folder() {
+        for name in [
+            "",
+            "..%2foutside.wasm",
+            "..%5coutside.wasm",
+            "C%3aoutside.wasm",
+        ] {
+            assert!(download_path(
+                &format!("https://example.com/{name}"),
+                Path::new("splitters")
+            )
+            .is_err());
         }
     }
 
     #[test]
-    fn prefers_nested_auto_splitting_runtime() {
-        let source = r#"
-            <AutoSplitters>
-                <AutoSplitter>
-                    <Games>
-                        <Game>Example Game</Game>
-                    </Games>
-                    <URLs>
-                        <URL>https://example.com/example.asl</URL>
-                    </URLs>
-                    <Type>Script</Type>
-                    <Description>ASL splitter</Description>
-                    <Website>https://example.com/asl</Website>
-                    <AutoSplittingRuntime>
-                        <URL>https://example.com/example.wasm</URL>
-                        <Description>WASM splitter</Description>
-                        <Website>https://example.com/wasm</Website>
-                    </AutoSplittingRuntime>
-                </AutoSplitter>
-            </AutoSplitters>
-        "#;
-        let list = parse_list(source);
-        let splitter = list.get_for_game("Example Game").unwrap();
-        let runtime = splitter.auto_splitting_runtime.as_ref().unwrap();
+    fn downloads_selected_runtime_module_through_core() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            net::TcpListener,
+            thread,
+            time::Duration,
+        };
 
-        assert!(splitter.is_using_auto_splitting_runtime());
-        assert_eq!(splitter.urls.urls, ["https://example.com/example.asl"]);
-        assert_eq!(runtime.url, "https://example.com/example.wasm");
-        assert_eq!(
-            list.get_description_for_game("Example Game"),
-            Some("WASM splitter")
-        );
-        assert_eq!(
-            list.get_website_for_game("Example Game"),
-            Some("https://example.com/wasm")
-        );
-    }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
 
-    #[test]
-    fn supports_wasm_only_auto_splitting_runtime_entry() {
-        let source = r#"
-            <AutoSplitters>
-                <AutoSplitter>
-                    <Games>
-                        <Game>Example Game</Game>
-                    </Games>
-                    <URLs>
-                        <URL>https://example.com/example.wasm</URL>
-                    </URLs>
-                    <Type>Script</Type>
-                    <ScriptType>AutoSplittingRuntime</ScriptType>
-                    <Description>WASM splitter</Description>
-                    <Website>https://example.com/wasm</Website>
-                </AutoSplitter>
-            </AutoSplitters>
-        "#;
-        let list = parse_list(source);
-        let splitter = list.get_for_game("Example Game").unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
 
-        assert!(splitter.is_using_auto_splitting_runtime());
-        assert!(splitter.auto_splitting_runtime.is_none());
-        assert_eq!(
-            list.get_description_for_game("Example Game"),
-            Some("WASM splitter")
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line.trim(), "GET /game%20one.wasm?download=1 HTTP/1.1");
+
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\n\0asm\x01\0\0\0").unwrap();
+        });
+
+        let source = format!(
+            r#"<AutoSplitters><AutoSplitter>
+            <Games><Game>Test</Game></Games>
+            <URLs><URL>http://{address}/legacy.asl</URL></URLs>
+            <Description>Test</Description>
+            <AutoSplittingRuntime><URL>http://{address}/game%20one.wasm?download=1</URL></AutoSplittingRuntime>
+        </AutoSplitter></AutoSplitters>"#
         );
-        assert_eq!(
-            list.get_website_for_game("Example Game"),
-            Some("https://example.com/wasm")
+
+        let mut downloader = Downloader::new();
+        downloader.client = ListDownloader::with_client(
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
         );
+
+        let folder =
+            std::env::temp_dir().join(format!("obs-livesplit-one-download-{}", std::process::id()));
+
+        fs::create_dir(&folder).unwrap();
+        let result = downloader.download_for_game(List::new(&source), "Test", &folder);
+        let bytes = result.as_ref().map(fs::read);
+        let count = fs::read_dir(&folder).unwrap().count();
+        fs::remove_dir_all(&folder).unwrap();
+
+        assert_eq!(result, Some(folder.join("game one.wasm")));
+        assert_eq!(bytes.unwrap().unwrap(), b"\0asm\x01\0\0\0");
+        assert_eq!(count, 1);
+        server.join().unwrap();
     }
 }
